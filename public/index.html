@@ -685,21 +685,55 @@ function interpretarDanfe(texto, nomeArquivo) {
   });
   return notas;
 }
+// Lê uma linha de item do DANFE: código · descrição · NCM · … · quantidade · valor unit. · valor total.
+// Os números são achados pela conta (qtd × unit = total), sem depender da unidade (PEÇ, PC…), e
+// aceitam erros comuns do OCR: "4.000" no lugar de "4,000", "386820" sem vírgula, "48,108,00".
+function interpNum(tok) {
+  const t = String(tok).replace(/[^\d.,]/g, ''); if (!t || !/\d/.test(t)) return [];
+  const out = [];
+  if (/^\d{1,3}(\.\d{3})*,\d{2,4}$/.test(t) || /^\d+,\d{2,4}$/.test(t)) out.push(parseNumBR(t));
+  if (/^\d+\.\d{3}$/.test(t)) out.push(parseFloat(t));                                   // 4.000 = 4
+  if (/^\d{1,3}(,\d{3})+,\d{2}$/.test(t)) out.push(parseFloat(t.slice(0, t.lastIndexOf(',')).replace(/,/g, '') + '.' + t.slice(-2)));
+  if (/^\d{1,3}(\.\d{3})*\.\d{2}$/.test(t)) out.push(parseFloat(t.slice(0, -3).replace(/\./g, '') + '.' + t.slice(-2)));
+  if (/^\d{3,}$/.test(t)) out.push(parseInt(t, 10) / 100);                                 // 386820 = 3.868,20
+  return [...new Set(out)];
+}
+function lerLinhaItem(l) {
+  const m = l.match(/^[^\d]{0,3}(\d{6,8})\s+(.+)$/); if (!m) return null;
+  const toks = m[2].split(' ');
+  const iN = toks.findIndex((t, i) => i > 0 && (/^\S*\d{4}[.,]\d{2}[.,]\d{2}$/.test(t) || /^[A-Za-z]{1,6}\d{2}[.,]\d{2}$/.test(t)));
+  if (iN < 1) return null;
+  const desc = toks.slice(0, iN).join(' ').replace(/[.\s]+$/, '').replace(/[“”]/g, '"').trim();
+  const rest = toks.slice(iN + 1).map(interpNum);
+  const inteiro = (x) => Math.abs(x - Math.round(x)) < 0.001;
+  const bate = (q, v, t) => q > 0 && v > 0 && inteiro(q) && Math.abs(q * v - t) <= Math.max(0.05, t * 0.001);
+  for (let k = 0; k + 2 < rest.length; k++) for (const q of rest[k]) for (const v of rest[k + 1]) for (const t of rest[k + 2]) if (bate(q, v, t)) return { codigo: m[1], desc, qtd: Math.round(q), vu: v, total: t };
+  // quantidade com 3 casas (formato do DANFE) e conta que não fecha: confia no total se der número inteiro
+  const iq = toks.slice(iN + 1).findIndex(t => /^\d+[.,]\d{3}$/.test(t.replace(/[^\d.,]/g, '')));
+  if (iq >= 0 && rest[iq + 1] && rest[iq + 1].length) {
+    const q = Math.round(parseFloat(toks[iN + 1 + iq].replace(/[^\d.,]/g, '').replace(',', '.'))); const v = rest[iq + 1][0];
+    const t = (rest[iq + 2] || [])[0];
+    if (t && v > 0 && inteiro(t / v) && t / v > 0) return { codigo: m[1], desc, qtd: Math.round(t / v), vu: v, total: t, duvida: true };
+    if (q > 0 && v > 0) return { codigo: m[1], desc, qtd: q, vu: v, total: q * v, duvida: true };
+  }
+  // quantidade 1 apagada no OCR: "280,01 280,01"
+  for (let k = 0; k + 1 < rest.length; k++) for (const v of rest[k]) if (v > 0 && rest[k + 1].some(t => Math.abs(t - v) < 0.005)) return { codigo: m[1], desc, qtd: 1, vu: v, total: v };
+  return null;
+}
 function interpretarBloco(txt, nomeArquivo) {
   const linhas = txt.split(/\n/).map(l => l.replace(/[|}{\[\]]/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean);
   const itens = []; const vistos = new Set();
-  const reItem = /^(\d{6,8})\s+(.+?)\s+(\d{4}\.?\d{2}\.?\d{2})\s+.*?\b(?:PE[CÇGQ]|PC|P[CÇ]S|UN|UNID|KG|M)\b\.?\s+([\d.]+,\d{2,4})\s+([\d.]+,\d{2,4})\s+([\d.]+,\d{2})/i;
   for (const l of linhas) {
-    const m = l.match(reItem);
-    if (m && !vistos.has(m[1])) {
-      vistos.add(m[1]);
-      itens.push({ codigo: m[1], desc: m[2].replace(/[.\s]+$/, '').replace(/[“”]/g, '"').trim(), qtd: parseNumBR(m[4]), vu: parseNumBR(m[5]), total: parseNumBR(m[6]) });
-    }
+    const it = lerLinhaItem(l);
+    if (!it) continue;
+    const k = it.codigo + '|' + it.desc;
+    if (vistos.has(k)) continue;
+    vistos.add(k); itens.push(it);
   }
   const tudo = linhas.join('\n');
   let numero = (tudo.match(/N[º°o]\.?\s*0*(\d{4,9})/i) || [])[1] || (String(nomeArquivo || '').match(/NF[\s_-]*0*(\d{4,9})/i) || [])[1] || '';
   const contrato = (tudo.match(/Contrato:?\s*(\d{6,12})/i) || [])[1] || '';
-  let qtdNota = 0; const mv = tudo.match(/^0*(\d{1,6})\s+PE[CÇGQ]?\b.*KG/im); if (mv) qtdNota = parseInt(mv[1], 10);
+  let qtdNota = 0; const mv = tudo.match(/^0*(\d{1,6})\s+(?:P\S{0,3}\s+)?[\d.,]+\s*KG/im); if (mv) qtdNota = parseInt(mv[1], 10);
   let totalNota = 0;
   const iImp = linhas.findIndex(l => /C[AÁ]LCULO DO IMPOSTO/i.test(l));
   if (iImp >= 0) linhas.slice(iImp, iImp + 6).forEach(l => (l.match(/\d{1,3}(?:\.\d{3})*,\d{2}/g) || []).forEach(v => { totalNota = Math.max(totalNota, parseNumBR(v)); }));
@@ -1093,6 +1127,7 @@ function validarNota(n) {
   const okV = n.totalNota ? Math.abs(somaV - parseNumBR(n.totalNota)) < 0.05 : null;
   const falta = [];
   if (!n.numero) falta.push('número'); if (!n.local) falta.push('local'); if (!(n.itens || []).length) falta.push('itens');
+  if ((n.itens || []).some(i => i.duvida)) falta.push('linhas em dúvida');
   if (okQ === false) falta.push('quantidade não bate'); if (okV === false) falta.push('valor não bate');
   return { somaQ, somaV, okQ, okV, falta, pronta: !falta.length };
 }
@@ -1147,7 +1182,7 @@ function TelaRecebimento({ ctx }) {
         const lidas = interpretarDanfe(r.texto, f.name);
         if (!lidas.length) { upd(id, { st: 'erro', msg: 'Não encontrei itens. Toque para cadastrar à mão.' }); continue; }
         const ops = lidas.map(l => ({ c: 'notas', doc: { id: uid('nf'), numero: l.numero, fornecedor: l.fornecedor || 'Mills', contrato: l.contrato, local: local || l.local, emissao: l.emissao, arquivo: f.name, metodo: r.metodo, qtdNota: l.qtdNota, totalNota: l.totalNota,
-          itens: l.itens.map(it => ({ key: itemKey(l.fornecedor || 'Mills', it.codigo), codigo: it.codigo, desc: it.desc, qtd: it.qtd, vu: it.vu })), status: 'rascunho', contagem: {}, criadoEm: agoraISO(), criadoPor: u.nome, textoLido: r.texto.slice(0, 20000) } }));
+          itens: l.itens.map(it => { const key = itemKey(l.fornecedor || 'Mills', it.codigo); const cat = store.pegar('catalogo', key); return { key, codigo: it.codigo, desc: (cat && cat.desc) || it.desc, qtd: it.qtd, vu: it.vu, duvida: !!it.duvida }; }), status: 'rascunho', contagem: {}, criadoEm: agoraISO(), criadoPor: u.nome, textoLido: r.texto.slice(0, 20000) } }));
         store.gravarVarios(ops);
         upd(id, { st: 'ok', msg: plural(ops.length, 'nota lida', 'notas lidas'), notas: ops.map(o => o.doc.id) });
       } catch (e) { console.error(e); upd(id, { st: 'erro', msg: e.message || 'Falha na leitura.' }); }
@@ -1239,11 +1274,12 @@ function RevisarNota({ ctx }) {
   const [n, setN] = useState(() => nota ? JSON.parse(JSON.stringify(nota)) : null);
   if (!n) return html`<${Tela} ctx=${ctx} titulo="Nota" voltar=${() => ir('receb')}><${Vazio}>Nota não encontrada.</${Vazio}></${Tela}>`;
   const set = (k, v) => setN(Object.assign({}, n, { [k]: v }));
-  const setItem = (i, k, v) => { const its = n.itens.slice(); its[i] = Object.assign({}, its[i], { [k]: v }); setN(Object.assign({}, n, { itens: its })); };
+  const setItem = (i, k, v) => { const its = n.itens.slice(); its[i] = Object.assign({}, its[i], { [k]: v, duvida: false }); setN(Object.assign({}, n, { itens: its })); };
+  const nDuvida = n.itens.filter(i => i.duvida).length;
   const v = validarNota(n);
   const semFoto = n.itens.filter(i => !(store.pegar('catalogo', itemKey(n.fornecedor, i.codigo)) || {}).foto).length;
   const salvar = (liberar) => {
-    const itens = n.itens.filter(i => i.codigo).map(i => Object.assign({}, i, { key: itemKey(n.fornecedor, i.codigo), qtd: Number(i.qtd) || 0, vu: parseNumBR(i.vu) }));
+    const itens = n.itens.filter(i => i.codigo).map(i => Object.assign({}, i, { key: itemKey(n.fornecedor, i.codigo), qtd: Number(i.qtd) || 0, vu: parseNumBR(i.vu) }, liberar ? { duvida: false } : {}));
     const ops = [];
     itens.forEach(i => { const c = store.pegar('catalogo', i.key); if (!c) ops.push({ c: 'catalogo', doc: { id: i.key, fornecedor: n.fornecedor, codigo: i.codigo, desc: i.desc, vu: i.vu, baia: '', rotulo: '', foto: null } }); else if (!c.vu && i.vu) ops.push({ c: 'catalogo', doc: Object.assign({}, c, { vu: i.vu }) }); });
     const doc = Object.assign({}, n, { itens, qtdNota: Number(n.qtdNota) || 0, totalNota: parseNumBR(n.totalNota) });
@@ -1273,8 +1309,9 @@ function RevisarNota({ ctx }) {
       ${linhaChk(semFoto ? null : true, 'Fotos de referência: ' + (n.itens.length - semFoto) + ' de ' + n.itens.length, semFoto ? 'Cadastre as que faltam no Catálogo' : 'Todas as peças têm foto')}
     </div>
     ${(v.okQ === false || v.okV === false) && html`<div className="note m">Os totais não bateram. Confira as linhas com a nota impressa antes de liberar.</div>`}
+    ${nDuvida > 0 && html`<div className="note y">${plural(nDuvida, 'linha ficou', 'linhas ficaram')} com leitura duvidosa (em amarelo). Confira quantidade e valor com o papel; ao corrigir, o destaque some.</div>`}
     <div className="card scrollx"><table className="tb"><thead><tr><th style=${{ width: 96 }}>Código</th><th>Descrição</th><th style=${{ width: 74 }}>Qtd</th><th style=${{ width: 96 }}>Valor unit.</th><th style=${{ width: 40 }}></th></tr></thead><tbody>
-      ${n.itens.map((i, ix) => html`<tr key=${ix}>
+      ${n.itens.map((i, ix) => html`<tr key=${ix} style=${i.duvida ? { background: 'var(--y-bg)' } : null}>
         <td><input value=${i.codigo} onChange=${(e) => setItem(ix, 'codigo', e.target.value.replace(/\D/g, ''))} aria-label="Código" /></td>
         <td><input value=${i.desc} onChange=${(e) => setItem(ix, 'desc', e.target.value.toUpperCase())} aria-label="Descrição" style=${{ minWidth: 180 }} /></td>
         <td><input inputmode="numeric" value=${i.qtd} onChange=${(e) => setItem(ix, 'qtd', e.target.value.replace(/[^\d]/g, ''))} aria-label="Quantidade" /></td>
