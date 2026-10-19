@@ -16,7 +16,7 @@ Um único arquivo: `public/index.html` (+ `public/sw.js` para abrir sem sinal).
 - `.github/workflows/deploy.yml` publica sozinho a cada alteração na branch `main`
   (precisa do segredo `FIREBASE_SERVICE_ACCOUNT` no repositório).
 - Antes de publicar: preencher `FIREBASE_CONFIG` no topo de `public/index.html`
-  e o ID do projeto em `.firebaserc`.
+  (já preenchido: projeto ccg-controle-pecas).
 - Sem `FIREBASE_CONFIG`, o app abre em modo demonstração.
 
 Administrador (perfil Escritório): controlepecasccg@gmail.com
