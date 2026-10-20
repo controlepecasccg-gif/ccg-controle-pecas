@@ -626,6 +626,20 @@ function despacharRemessa(rem, usuario, statusFinal) {
   return r;
 }
 
+/* ======= conferência em viagens =======
+   nota.viagens = [{ n, em, por, recebido: {key: qtd} }] (viagens fechadas, peças já no CD)
+   nota.contagem = o que está sendo contado na viagem aberta agora */
+function recebidoAntes(n) { const r = {}; (n.viagens || []).forEach(v => Object.keys(v.recebido || {}).forEach(k => r[k] = (r[k] || 0) + (Number(v.recebido[k]) || 0))); return r; }
+function recebidoNota(n) { // total recebido por item (viagens fechadas + contagem; notas antigas guardavam só a contagem)
+  const r = recebidoAntes(n); Object.keys(n.contagem || {}).forEach(k => r[k] = (r[k] || 0) + (Number(n.contagem[k]) || 0)); return r;
+}
+function pecasRecebidas(n) { const r = n.status === 'concluida' ? recebidoNota(n) : recebidoAntes(n); return Object.values(r).reduce((a, b) => a + b, 0); }
+function diferencasNota(n) { // só faz sentido em nota concluída
+  const r = recebidoNota(n); let fq = 0, fv = 0, sq = 0; const faltas = [], sobras = [];
+  (n.itens || []).forEach(i => { const q = r[i.key] || 0; if (q < i.qtd) { fq += i.qtd - q; fv += (i.qtd - q) * (i.vu || 0); faltas.push(Object.assign({ rec: q }, i)); } if (q > i.qtd) { sq += q - i.qtd; sobras.push(Object.assign({ rec: q }, i)); } });
+  return { fq, fv, sq, faltas, sobras };
+}
+
 /* ================= LEITURA DA NOTA (PDF / imagem) ================= */
 async function lerTextoPDF(file, aoProgresso) {
   await loadScript(LIBS.pdfjs);
@@ -850,7 +864,7 @@ async function gerarPlanilha() {
   const rems = store.todos('remessas').sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || '')).map(r => ({ 'Nº': r.numero, 'Tipo': TIPO_REMESSA[r.tipo] || r.tipo, 'Origem': r.origem, 'Destino': r.destino, 'Data de uso': fmtData(r.dataUso), 'Solicitado em': fmtDataHora(r.criadoEm), ['Pedido no prazo (até ' + HORA_LIMITE_PEDIDO + 'h)']: r.tipo === 'pedido' ? (r.noPrazo ? 'SIM' : 'NÃO') : '', 'Separado em': fmtDataHora(r.separadoEm), 'Retirado em': fmtDataHora(r.retiradoEm), 'Recebido em': fmtDataHora(r.recebidoEm), 'Status': remessaStatusInfo(r.status)[0], 'Solicitante': r.solicitante || '', 'Itens': (r.itens || []).map(i => (i.recebido != null ? i.recebido : i.enviado != null ? i.enviado : i.qtd) + ' × ' + descItem(i.key)).join('; ') }));
   // 7. Conferência de notas
   const conf = [];
-  store.todos('notas').forEach(n => (n.itens || []).forEach(i => { const rec = n.contagem && n.contagem[i.key] != null ? n.contagem[i.key] : null; conf.push({ 'NF': n.numero, 'Fornecedor': n.fornecedor, 'Local da aplicação': n.local, 'Status da nota': ({ rascunho: 'Rascunho', liberada: 'A conferir', em_conferencia: 'Em conferência', concluida: 'Concluída' })[n.status] || n.status, 'Código': i.codigo, 'Peça': i.desc, 'Qtd na nota': i.qtd, 'Recebido': rec == null ? '' : rec, 'Diferença': rec == null ? '' : rec - i.qtd, 'Valor unit.': i.vu, 'Valor da diferença': rec == null ? '' : (rec - i.qtd) * i.vu, 'Conferente': n.conferente || '', 'Concluída em': fmtDataHora(n.concluidaEm) }); }));
+  store.todos('notas').forEach(n => { const rn = n.status === 'concluida' ? recebidoNota(n) : recebidoAntes(n); (n.itens || []).forEach(i => { const rec = n.status === 'concluida' ? (rn[i.key] || 0) : (rn[i.key] != null ? rn[i.key] : null); conf.push({ 'NF': n.numero, 'Fornecedor': n.fornecedor, 'Local da aplicação': n.local, 'Status da nota': ({ rascunho: 'Rascunho', liberada: 'A conferir', em_conferencia: 'Em conferência', concluida: 'Concluída' })[n.status] || n.status, 'Código': i.codigo, 'Peça': i.desc, 'Qtd na nota': i.qtd, 'Recebido': rec == null ? '' : rec, 'Diferença': rec == null ? '' : rec - i.qtd, 'Valor unit.': i.vu, 'Valor da diferença': rec == null ? '' : (rec - i.qtd) * i.vu, 'Conferente': n.conferente || '', 'Viagens': (n.viagens || []).length || (n.status === 'concluida' ? 1 : 0), 'Concluída em': fmtDataHora(n.concluidaEm) }); }); });
   // 7b. Onde está cada peça, por local e nota
   const porNota = [];
   store.todos('notas').filter(n => n.status !== 'rascunho').sort((a, b) => (a.local || '').localeCompare(b.local || '') || (a.numero || '').localeCompare(b.numero || '')).forEach(n => resumoNota(n).itens.forEach(i => porNota.push({
@@ -1138,8 +1152,7 @@ function validarNota(n) {
 }
 function statusNota(st) { return ({ rascunho: ['Revisar leitura', 'y'], liberada: ['A conferir', 'y'], em_conferencia: ['Em conferência', 'y'], concluida: ['Concluída', 'ok'] })[st] || [st, 'g']; }
 function resumoFaltas(n) {
-  const c = n.contagem || {}; const f = (n.itens || []).filter(i => c[i.key] != null && c[i.key] < i.qtd); const s = (n.itens || []).filter(i => c[i.key] != null && c[i.key] > i.qtd);
-  const qf = f.reduce((t, i) => t + i.qtd - c[i.key], 0), qs = s.reduce((t, i) => t + c[i.key] - i.qtd, 0);
+  const d = diferencasNota(n); const qf = d.fq, qs = d.sq;
   if (!qf && !qs) return 'tudo certo';
   return [qf ? 'faltam ' + plural(qf, 'peça') : '', qs ? 'sobram ' + plural(qs, 'peça') : ''].filter(Boolean).join(' · ');
 }
@@ -1169,9 +1182,7 @@ async function imagemLeve(src) { // até ~700 KB por folha
 // Situação de uma nota para os filtros
 function situacaoNota(n) {
   if (n.status !== 'concluida') return { aberta: true, falta: false, sobra: false };
-  const c = n.contagem || {};
-  const falta = (n.itens || []).some(i => c[i.key] != null && c[i.key] < i.qtd);
-  const sobra = (n.itens || []).some(i => c[i.key] != null && c[i.key] > i.qtd);
+  const d = diferencasNota(n); const falta = d.fq > 0, sobra = d.sq > 0;
   return { aberta: false, falta, sobra, ok: !falta && !sobra };
 }
 // Nome canônico da empresa (cada empresa tem seu grupo) e logo, quando houver
@@ -1185,14 +1196,14 @@ function TileEmpresa({ nome, s }) {
 const SIT_COR = { conferir: '#B8962E', falta: '#9C3D6E', sobra: '#4A6491', ok: '#3E7A5E' };
 function EtiquetaSit({ k, t }) { return html`<span style=${{ fontSize: 11, fontWeight: 600, padding: '4px 9px', borderRadius: 999, background: 'var(--bg)', color: 'var(--muted)', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 5 }}><span className="dot" style=${{ width: 7, height: 7, background: SIT_COR[k] }}></span>${t}</span>`; }
 function valoresNota(n) { // falta (R$, peças) e sobra (peças) de uma nota concluída
-  const c = n.contagem || {}; let fq = 0, fv = 0, sq = 0;
-  (n.itens || []).forEach(i => { if (c[i.key] == null) return; if (c[i.key] < i.qtd) { fq += i.qtd - c[i.key]; fv += (i.qtd - c[i.key]) * (i.vu || 0); } if (c[i.key] > i.qtd) sq += c[i.key] - i.qtd; });
-  return { fq, fv, sq };
+  const d = diferencasNota(n); return { fq: d.fq, fv: d.fv, sq: d.sq };
 }
 function chaveSit(n) { return n.sit.aberta ? 'conferir' : n.sit.falta ? 'falta' : n.sit.sobra ? 'sobra' : 'ok'; }
 function linhaInfoNota(n) {
   const c = n.contagem || {}; const conf = Object.keys(c).length; const it = (n.itens || []).length;
   if (n.status === 'rascunho') return 'revisar leitura · ' + validarNota(n).falta.join(', ');
+  const nv = (n.viagens || []).length;
+  if (n.status !== 'concluida' && nv) { const tq = (n.itens || []).reduce((t, i) => t + (Number(i.qtd) || 0), 0); return 'parcial · ' + plural(nv, 'viagem', 'viagens') + ' · ' + nfmt(pecasRecebidas(n)) + ' de ' + nfmt(tq) + ' peças'; }
   if (n.status !== 'concluida') return conf ? conf + ' de ' + it + ' itens conferidos' : 'ainda não começou · ' + plural(it, 'item', 'itens');
   const v = valoresNota(n);
   return [v.fq ? 'faltam ' + plural(v.fq, 'peça') + ' · ' + brl(v.fv) + ' em risco' : '', v.sq ? 'sobram ' + plural(v.sq, 'peça') + ' fora da nota' : ''].filter(Boolean).join(' · ') || 'tudo certo';
@@ -1319,14 +1330,15 @@ function TelaRecebimento({ ctx }) {
   const lista = (ns, semEmp) => html`<div className="card">${ns.map(n => html`<${LinhaNotaReceb} key=${n.id} n=${n} semEmpresa=${semEmp} aoAbrir=${() => abrirNota(n)} />`)}</div>`;
   const cartaoAberta = (n) => {
     const it = (n.itens || []).length, conf = Object.keys(n.contagem || {}).length, qp = (n.itens || []).reduce((t, i) => t + (Number(i.qtd) || 0), 0);
-    const rev = n.status === 'rascunho';
+    const rev = n.status === 'rascunho'; const parcial = (n.viagens || []).length > 0;
+    const prog = parcial ? (qp ? pecasRecebidas(n) / qp * 100 : 0) : (it ? conf / it * 100 : 0);
     return html`<div key=${n.id} className="card pad" style=${{ gap: 10, padding: '14px 16px' }}>
       <div style=${{ display: 'flex', alignItems: 'center', gap: 12 }}><${TileEmpresa} nome=${n.fornecedor} />
         <span className="grow"><div style=${{ fontSize: 16, fontWeight: 700 }}>NF ${n.numero || '(sem número)'} · ${grupoEmpresa(n.fornecedor)}</div><div className="t2">${n.local || 'sem local'} · ${nfmt(qp)} pç</div></span>
-        <${EtiquetaSit} k="conferir" t=${rev ? 'Revisar leitura' : 'A conferir'} /></div>
+        <${EtiquetaSit} k="conferir" t=${rev ? 'Revisar leitura' : parcial ? 'Parcial' : 'A conferir'} /></div>
       <div style=${{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span className="grow" style=${{ display: 'flex', flexDirection: 'column', gap: 4 }}><span className="bar thin" style=${{ height: 6 }}><div style=${{ width: (it ? conf / it * 100 : 0) + '%', background: 'var(--navy)' }}></div></span><span className="t3">${linhaInfoNota(n)}</span></span>
-        <button className="btn dark xs" style=${{ borderRadius: 12, minHeight: 40, padding: '0 16px', fontSize: 13, fontWeight: 700 }} onClick=${() => abrirNota(n)}>${rev ? 'Revisar' : conf ? 'Continuar' : 'Conferir'}</button></div>
+        <span className="grow" style=${{ display: 'flex', flexDirection: 'column', gap: 4 }}><span className="bar thin" style=${{ height: 6 }}><div style=${{ width: prog + '%', background: 'var(--navy)' }}></div></span><span className="t3">${linhaInfoNota(n)}</span></span>
+        <button className="btn dark xs" style=${{ borderRadius: 12, minHeight: 40, padding: '0 16px', fontSize: 13, fontWeight: 700 }} onClick=${() => abrirNota(n)}>${rev ? 'Revisar' : parcial ? 'Nova viagem' : conf ? 'Continuar' : 'Conferir'}</button></div>
     </div>`;
   };
 
@@ -1373,7 +1385,7 @@ function TelaEmpresa({ ctx }) {
   const notas = store.todos('notas').filter(n => grupoEmpresa(n.fornecedor) === g).map(n => Object.assign({ sit: situacaoNota(n) }, n));
   const S = { conferir: n => n.sit.aberta, falta: n => n.sit.falta, sobra: n => n.sit.sobra, ok: n => n.sit.ok };
   const [seg, setSeg] = useState(() => ['conferir', 'falta', 'sobra', 'ok'].find(k => notas.some(S[k])) || 'conferir');
-  const pecas = notas.filter(n => n.status === 'concluida').reduce((t, n) => t + Object.values(n.contagem || {}).reduce((a, b) => a + (Number(b) || 0), 0), 0);
+  const pecas = notas.reduce((t, n) => t + pecasRecebidas(n), 0);
   const fv = notas.filter(n => n.status === 'concluida').reduce((t, n) => t + valoresNota(n).fv, 0);
   const lista = notas.filter(S[seg]).sort((a, b) => (b.concluidaEm || b.criadoEm || '').localeCompare(a.concluidaEm || a.criadoEm || ''));
   const abrir = (n) => ir('receb', n.status === 'rascunho' ? (podeNotas ? 'revisar' : 'nota') : n.status === 'concluida' ? 'nota' : (podeNotas ? 'conferir' : 'nota'), { id: n.id });
@@ -1391,10 +1403,10 @@ function TelaEmpresa({ ctx }) {
       ${lista.length ? lista.map(n => { const it = (n.itens || []).length, conf = Object.keys(n.contagem || {}).length, qp = (n.itens || []).reduce((t, i) => t + (Number(i.qtd) || 0), 0); const k = chaveSit(n);
         return html`<div key=${n.id} className="card pad" style=${{ gap: 10 }}>
           <div style=${{ display: 'flex', alignItems: 'center', gap: 10 }}><span className="grow"><div style=${{ fontSize: 16, fontWeight: 700 }}>NF ${n.numero || '(sem número)'}</div><div className="t2">${n.local || 'sem local'} · ${n.status === 'concluida' ? 'conferida ' + fmtDataCurta(dataLocal(new Date(n.concluidaEm))) : 'chegou ' + fmtDataCurta(dataLocal(new Date(n.criadoEm)))}</div></span>
-            <${EtiquetaSit} k=${k} t=${n.status === 'rascunho' ? 'Revisar leitura' : { conferir: 'A conferir', falta: 'Com falta', sobra: 'Com sobra', ok: 'Tudo certo' }[k]} /></div>
+            <${EtiquetaSit} k=${k} t=${n.status === 'rascunho' ? 'Revisar leitura' : (n.viagens || []).length && n.status !== 'concluida' ? 'Parcial' : { conferir: 'A conferir', falta: 'Com falta', sobra: 'Com sobra', ok: 'Tudo certo' }[k]} /></div>
           <div style=${{ display: 'flex', gap: 18 }} className="t3"><span><b style=${{ fontSize: 15, color: 'var(--navy)', display: 'block' }}>${nfmt(qp)}</b>peças</span><span><b style=${{ fontSize: 15, color: 'var(--navy)', display: 'block' }}>${it}</b>itens</span><span><b style=${{ fontSize: 15, color: 'var(--navy)', display: 'block' }}>${n.totalNota ? brl(n.totalNota).replace(/,00$/, '') : '—'}</b>valor da nota</span></div>
           ${n.sit.aberta ? html`<div style=${{ display: 'flex', alignItems: 'center', gap: 10 }}><span className="bar thin grow"><div style=${{ width: (it ? conf / it * 100 : 0) + '%', background: 'var(--navy)' }}></div></span><span className="t3" style=${{ fontWeight: 600 }}>${conf} de ${it}</span></div>
-            <button className="btn dark sm" onClick=${() => abrir(n)}>${n.status === 'rascunho' ? 'Revisar leitura' : conf ? 'Continuar conferência' : 'Conferir'}</button>`
+            <button className="btn dark sm" onClick=${() => abrir(n)}>${n.status === 'rascunho' ? 'Revisar leitura' : (n.viagens || []).length ? 'Conferir nova viagem' : conf ? 'Continuar conferência' : 'Conferir'}</button>`
           : html`<button className="note" style=${{ background: 'var(--bg)', color: 'var(--navy)', border: 'none', textAlign: 'left', fontFamily: 'inherit', display: 'flex', justifyContent: 'space-between', gap: 8 }} onClick=${() => abrir(n)}><span>${linhaInfoNota(n)}</span><span className="chev" style=${{ fontSize: 16 }}>›</span></button>`}
         </div>`; }) : html`<div className="card"><${Vazio}>Nenhuma nota aqui.</${Vazio}></div>`}
     </main></${React.Fragment}>`;
@@ -1463,85 +1475,109 @@ function RevisarNota({ ctx }) {
 function TelaConferencia({ ctx }) {
   const { usuario: u, ir, nav } = ctx; useStore();
   const nota = store.pegar('notas', nav.p.id);
-  const [aberto, setAberto] = useState(null); const [foto, setFoto] = useState(false); const [fechar, setFechar] = useState(false);
+  const [aberto, setAberto] = useState(null); const [foto, setFoto] = useState(false); const [folha, setFolha] = useState(null); const [feito, setFeito] = useState(null);
   if (!nota) return html`<${Tela} ctx=${ctx} titulo="Conferência" voltar=${() => ir('receb')}><${Vazio}>Nota não encontrada.</${Vazio}></${Tela}>`;
+  if (feito) return html`<${Tela} ctx=${ctx} eyebrow=${nota.local || ''} titulo=${'NF ' + nota.numero + ' · ' + grupoEmpresa(nota.fornecedor)} voltar=${() => ir('receb')}><${CompartilharRelatorio} nota=${store.pegar('notas', feito) || nota} concluiu=${true} aoFechar=${() => ir('receb')} /></${Tela}>`;
   if (nota.status === 'concluida') return html`<${DetalheNota} ctx=${ctx} />`;
-  const cont = nota.contagem || {};
+  const cont = nota.contagem || {}; const antes = recebidoAntes(nota); const viagens = nota.viagens || []; const nv = viagens.length + 1;
   const setCont = (key, v) => { const c = Object.assign({}, cont); if (v === null) delete c[key]; else c[key] = v; store.gravar('notas', Object.assign({}, nota, { contagem: c, status: 'em_conferencia', conferente: u.nome })); };
-  let falta = 0; let feitos = 0;
-  const itens = nota.itens.map(i => { const k = cont[i.key]; const tem = k != null; if (tem) feitos++;
-    let cor = 'var(--y)', st = 'A coletar', tg = 'y';
-    if (tem && k === i.qtd) { cor = 'var(--ok)'; st = 'Recebido'; tg = 'ok'; }
-    if (tem && k < i.qtd) { cor = 'var(--mag)'; st = 'Faltando ' + (i.qtd - k); tg = 'm'; falta += (i.qtd - k) * i.vu; }
-    if (tem && k > i.qtd) { cor = 'var(--blue)'; st = 'Sobrando ' + (k - i.qtd); tg = 'b'; }
-    return Object.assign({}, i, { k, tem, cor, st, tg }); });
-  const proximo = (key) => { const ix = itens.findIndex(x => x.key === key); const nx = itens.find((x, j) => j > ix && !x.tem && x.key !== key) || itens.find(x => !x.tem && x.key !== key); setAberto(nx ? nx.key : null); setFoto(false); };
-  return html`<${Tela} ctx=${ctx} eyebrow=${nota.local || 'Local não definido'} titulo=${'NF ' + nota.numero + ' · ' + nota.fornecedor} voltar=${() => ir('receb')}>
-    <div className="card pad" style=${{ gap: 8 }}>
-      <div style=${{ display: 'flex', justifyContent: 'space-between', fontSize: 14, gap: 8 }}><b>${feitos} de ${nota.itens.length} conferidos</b><b style=${{ color: falta ? 'var(--mag-t)' : 'var(--ok-t)' }}>${falta ? brl(falta) + ' em falta' : 'Nada em falta'}</b></div>
-      <div className="bar thin"><div style=${{ width: feitos / Math.max(1, nota.itens.length) * 100 + '%', background: 'var(--navy)' }}></div></div>
+  const itens = nota.itens.map(i => {
+    const a = antes[i.key] || 0, k = cont[i.key], tem = k != null, agora = tem ? k : 0, tot = a + agora, resta = Math.max(0, i.qtd - a);
+    let k2 = 'conferir', st;
+    if (a >= i.qtd) { st = a > i.qtd ? 'Sobrando ' + (a - i.qtd) : 'Completo'; k2 = a > i.qtd ? 'sobra' : 'ok'; }
+    else if (tot > i.qtd) { st = 'Sobrando ' + (tot - i.qtd); k2 = 'sobra'; }
+    else if (tot === i.qtd) { st = viagens.length ? 'Completou agora' : 'Recebido'; k2 = 'ok'; }
+    else if (tem && agora > 0) { st = 'Parcial · faltam ' + (i.qtd - tot); }
+    else if (tem) { st = viagens.length ? 'Não veio nesta' : 'Não veio'; }
+    else if (a > 0) { st = 'Faltam ' + (i.qtd - a); }
+    else st = 'A coletar';
+    return Object.assign({}, i, { a, k, tem, agora, tot, resta, st, k2, completoAntes: a >= i.qtd });
+  });
+  const qtdNota = itens.reduce((t, i) => t + i.qtd, 0), recAntes = itens.reduce((t, i) => t + i.a, 0), recAgora = itens.reduce((t, i) => t + i.agora, 0);
+  const pendentesItens = itens.filter(i => !i.completoAntes);
+  const vaiCompletar = itens.every(i => i.tot >= i.qtd);
+  const proximo = (key) => { const ix = itens.findIndex(x => x.key === key); const livre = (x) => !x.tem && !x.completoAntes && x.key !== key; const nx = itens.find((x, j) => j > ix && livre(x)) || itens.find(livre); setAberto(nx ? nx.key : null); setFoto(false); };
+  return html`<${Tela} ctx=${ctx} eyebrow=${nota.local || 'Local não definido'} titulo=${'NF ' + nota.numero + ' · ' + grupoEmpresa(nota.fornecedor)} voltar=${() => ir('receb')}
+      direita=${viagens.length > 0 && html`<button className="hbtn" style=${{ background: 'var(--dark2)', color: '#fff' }} onClick=${() => setFolha({ t: 'relatorio' })}><${Ic} n="doc" s=${16} />Relatório</button>`}>
+    <div className="card pad" style=${{ gap: 10 }}>
+      <div style=${{ display: 'flex', justifyContent: 'space-between', fontSize: 14, gap: 8 }}><b>Recebido até agora</b><b>${nfmt(recAntes + recAgora)} de ${nfmt(qtdNota)} peças</b></div>
+      <div className="bar thin">${viagens.map((v, ix) => { const q = Object.values(v.recebido || {}).reduce((a, b) => a + b, 0); return html`<div key=${ix} style=${{ width: q / Math.max(1, qtdNota) * 100 + '%', background: ix % 2 ? '#2F3B3A' : 'var(--navy)', borderRight: '1px solid #fff' }}></div>`; })}<div style=${{ width: recAgora / Math.max(1, qtdNota) * 100 + '%', background: 'var(--slate)' }}></div></div>
+      <div className="t3" style=${{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px' }}>${viagens.map((v, ix) => html`<span key=${ix}>Viagem ${v.n} · ${fmtDataCurta(dataLocal(new Date(v.em)))} · ${nfmt(Object.values(v.recebido || {}).reduce((a, b) => a + b, 0))} pç</span>`)}<span style=${{ fontWeight: 600, color: 'var(--navy)' }}>Viagem ${nv} · agora · ${nfmt(recAgora)} pç</span></div>
     </div>
+    <div className="sec">${viagens.length ? 'Viagem ' + nv + ' · conferindo agora' : 'Conferindo'}<span className="t2">${viagens.length ? plural(pendentesItens.length, 'item ainda esperado', 'itens ainda esperados') : 'toque no item'}</span></div>
     <div className="card">${itens.map(i => { const ab = aberto === i.key; const cat = catalogoItem(i.key);
       return html`<div key=${i.key} style=${ab ? { boxShadow: 'inset 0 0 0 2px var(--navy)', borderRadius: 18 } : null}>
-        <button className="row" onClick=${() => { setAberto(ab ? null : i.key); setFoto(false); }}>
-          <span className="dot" style=${{ background: i.cor }}></span>
-          <span className="grow"><div className="t1">${i.desc}</div><div className="t2">${i.codigo} · nota ${nfmt(i.qtd)}</div></span>
-          <span className=${'tag ' + i.tg}>${i.st}</span></button>
+        <button className="row" onClick=${() => { setAberto(ab ? null : i.key); setFoto(false); }} style=${i.completoAntes ? { opacity: 0.6 } : null}>
+          <span className="grow"><div className="t1">${i.desc}</div><div className="t2">nota ${nfmt(i.qtd)}${i.a ? ' · já vieram ' + nfmt(i.a) : ''}${i.tem && viagens.length ? ' · nesta viagem ' + nfmt(i.agora) : ''}</div></span>
+          <${EtiquetaSit} k=${i.k2} t=${i.st} /></button>
         ${ab && html`<div style=${{ padding: '4px 16px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          ${viagens.length > 0 && html`<div style=${{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 6 }}>${[[i.qtd, 'na nota'], [i.a, 'já vieram'], [i.resta, 'faltam vir']].map(([v, l]) => html`<span key=${l} style=${{ background: 'var(--bg)', borderRadius: 10, padding: '8px 10px', fontSize: 12 }}><b style=${{ display: 'block', fontSize: 15 }}>${nfmt(v)}</b>${l}</span>`)}</div>`}
           <button className="btn soft xs" style=${{ alignSelf: 'flex-start' }} onClick=${() => setFoto(!foto)}><${Ic} n="image" s=${16} />${foto ? 'Esconder foto' : 'Ver foto da peça'}</button>
           ${foto && html`<${Foto} url=${cat.foto} alt=${'Foto de referência: ' + i.desc} h=${200} />`}
-          <button className="btn sm" onClick=${() => { setCont(i.key, i.qtd); proximo(i.key); }}>Chegou tudo (${nfmt(i.qtd)})</button>
-          <div style=${{ display: 'flex', alignItems: 'center', gap: 10 }}><span style=${{ flex: 1, fontWeight: 600, fontSize: 14 }}>Contei</span><${Stepper} valor=${i.tem ? i.k : i.qtd} set=${(v) => setCont(i.key, v === '' ? 0 : v)} /></div>
-          ${i.tem && i.k !== i.qtd && html`<div className=${'note ' + (i.k < i.qtd ? 'm' : 'b')}>${i.k < i.qtd ? 'Faltam ' + (i.qtd - i.k) + ' · ' + brl((i.qtd - i.k) * i.vu) + ' em risco' : 'Sobram ' + (i.k - i.qtd) + ' · fora da nota'}</div>`}
-          ${i.tem && html`<button className="link" style=${{ alignSelf: 'flex-start', color: 'var(--muted)' }} onClick=${() => setCont(i.key, null)}>Desfazer (voltar para "a coletar")</button>`}
+          ${!i.completoAntes && html`<button className="btn dark sm" onClick=${() => { setCont(i.key, i.resta); proximo(i.key); }}>${i.a ? 'Chegou o restante' : 'Chegou tudo'} (${nfmt(i.resta)})</button>`}
+          <div style=${{ display: 'flex', alignItems: 'center', gap: 10 }}><span style=${{ flex: 1, fontWeight: 600, fontSize: 14 }}>${viagens.length ? 'Nesta viagem chegaram' : 'Contei'}</span><${Stepper} valor=${i.tem ? i.k : (i.completoAntes ? 0 : i.resta)} set=${(v) => setCont(i.key, v === '' ? 0 : v)} /></div>
+          ${i.tem && i.tot > i.qtd && html`<div className="note b">Sobram ${i.tot - i.qtd} · fora da nota</div>`}
+          ${i.tem && html`<button className="link" style=${{ alignSelf: 'flex-start', color: 'var(--muted)' }} onClick=${() => setCont(i.key, null)}>Desfazer</button>`}
         </div>`}</div>`; })}</div>
-    <div className="hint">Toque no item para conferir. Tudo fica salvo no aparelho mesmo sem sinal.</div>
-    <${Rodape}><button className="btn dark block" disabled=${feitos < nota.itens.length} onClick=${() => setFechar(true)}>${feitos < nota.itens.length ? 'Fechar conferência · faltam ' + (nota.itens.length - feitos) : 'Fechar conferência'}</button></${Rodape}>
-    ${fechar && html`<${FecharConferencia} ctx=${ctx} nota=${nota} itens=${itens} aoFechar=${() => setFechar(false)} />`}
+    <div className="hint">Item que não veio nesta viagem fica com zero e continua esperando a próxima, sem virar falta. Tudo fica salvo no aparelho mesmo sem sinal.</div>
+    <${Rodape}>
+      <button className="btn block" disabled=${!recAgora && !Object.keys(cont).length} onClick=${() => setFolha({ t: 'viagem' })}>${vaiCompletar ? 'Concluir conferência' : 'Fechar viagem ' + nv + ' · ' + plural(recAgora, 'peça')}</button>
+      ${!vaiCompletar && html`<button className="link" style=${{ alignSelf: 'center', color: 'var(--muted)', padding: 2 }} onClick=${() => setFolha({ t: 'encerrar' })}>Não vem mais nada · encerrar a nota</button>`}
+    </${Rodape}>
+    ${folha && folha.t === 'viagem' && html`<${FecharViagem} ctx=${ctx} nota=${nota} itens=${itens} encerrar=${vaiCompletar} aoFechar=${() => setFolha(null)} aoConcluir=${(id) => { setFolha(null); setFeito(id); }} />`}
+    ${folha && folha.t === 'encerrar' && html`<${FecharViagem} ctx=${ctx} nota=${nota} itens=${itens} encerrar=${true} forcado=${true} aoFechar=${() => setFolha(null)} aoConcluir=${(id) => { setFolha(null); setFeito(id); }} />`}
+    ${folha && folha.t === 'relatorio' && html`<${CompartilharRelatorio} nota=${nota} aoFechar=${() => setFolha(null)} />`}
   </${Tela}>`;
 }
-function FecharConferencia({ ctx, nota, itens, aoFechar }) {
-  const { usuario: u, ir } = ctx;
+// Fecha a viagem atual (peças entram no CD). Com encerrar=true, fecha a nota: o que não veio vira falta.
+function FecharViagem({ ctx, nota, itens, encerrar, forcado, aoFechar, aoConcluir }) {
+  const { usuario: u } = ctx;
   const [nome, setNome] = useState(u.nome);
-  const rec = itens.reduce((t, i) => t + Math.min(i.k, i.qtd), 0);
-  const faltas = itens.filter(i => i.k < i.qtd), sobras = itens.filter(i => i.k > i.qtd);
-  const msg = 'CONFERÊNCIA · ' + (nota.local || '').toUpperCase() + '\nNF ' + nota.numero + ' · ' + nota.fornecedor + ' · ' + fmtData(hoje()) +
-    '\nRecebido OK: ' + itens.filter(i => i.k === i.qtd).length + ' itens' +
-    '\nFaltando: ' + (faltas.length ? faltas.map(i => i.desc + ' · ' + (i.qtd - i.k) + ' pç').join('; ') : 'nenhum') +
-    '\nSobrando: ' + (sobras.length ? sobras.map(i => i.desc + ' · ' + (i.k - i.qtd) + ' pç').join('; ') : 'nenhum') + '\nConferente: ' + nome;
-  const concluir = () => {
-    const ops = [];
-    itens.forEach(i => {
-      if (i.k > 0) ops.push(movimento('entrada', i.key, i.k, 'NF', 'CD', nota.id, nome, { nf: nota.id }));
-      if (i.k < i.qtd) ops.push({ c: 'pendencias', doc: { id: uid('pd'), tipo: 'falta', origem: 'NF ' + nota.numero, ref: nota.id, local: 'Recebimento', key: i.key, qtd: i.qtd - i.k, valor: (i.qtd - i.k) * i.vu, status: 'aberta', criadoEm: agoraISO(), criadoPor: nome, obs: 'Nota ' + i.qtd + ', chegaram ' + i.k } });
-      if (i.k > i.qtd) ops.push({ c: 'pendencias', doc: { id: uid('pd'), tipo: 'sobra', origem: 'NF ' + nota.numero, ref: nota.id, local: 'Recebimento', key: i.key, qtd: i.k - i.qtd, valor: 0, status: 'aberta', criadoEm: agoraISO(), criadoPor: nome, obs: 'Nota ' + i.qtd + ', chegaram ' + i.k } });
-    });
-    ops.push({ c: 'notas', doc: Object.assign({}, nota, { status: 'concluida', concluidaEm: agoraISO(), conferente: nome }) });
-    store.gravarVarios(ops); toast('Conferência concluída. Peças no CD.'); ir('receb');
+  const nv = (nota.viagens || []).length + 1;
+  const agora = itens.filter(i => i.agora > 0); const qAgora = agora.reduce((t, i) => t + i.agora, 0);
+  const aindaVem = itens.filter(i => i.tot < i.qtd).map(i => Object.assign({ falta: i.qtd - i.tot }, i));
+  const qVem = aindaVem.reduce((t, i) => t + i.falta, 0), vVem = aindaVem.reduce((t, i) => t + i.falta * (i.vu || 0), 0);
+  const sobras = itens.filter(i => i.tot > i.qtd);
+  const confirmar = () => {
+    const ops = []; const recebido = {};
+    agora.forEach(i => { recebido[i.key] = i.agora; ops.push(movimento('entrada', i.key, i.agora, 'NF', 'CD', nota.id, nome, { nf: nota.id, viagem: nv })); });
+    const viagens = (nota.viagens || []).concat(qAgora || !(nota.viagens || []).length ? [{ n: nv, em: agoraISO(), por: nome, recebido }] : []);
+    const doc = Object.assign({}, nota, { viagens, contagem: {}, status: 'em_conferencia', conferente: nome });
+    if (encerrar) {
+      aindaVem.forEach(i => ops.push({ c: 'pendencias', doc: { id: uid('pd'), tipo: 'falta', origem: 'NF ' + nota.numero, ref: nota.id, local: 'Recebimento', key: i.key, qtd: i.falta, valor: i.falta * (i.vu || 0), status: 'aberta', criadoEm: agoraISO(), criadoPor: nome, obs: 'Nota ' + i.qtd + ', chegaram ' + i.tot } }));
+      sobras.forEach(i => ops.push({ c: 'pendencias', doc: { id: uid('pd'), tipo: 'sobra', origem: 'NF ' + nota.numero, ref: nota.id, local: 'Recebimento', key: i.key, qtd: i.tot - i.qtd, valor: 0, status: 'aberta', criadoEm: agoraISO(), criadoPor: nome, obs: 'Nota ' + i.qtd + ', chegaram ' + i.tot } }));
+      Object.assign(doc, { status: 'concluida', concluidaEm: agoraISO() });
+    }
+    ops.push({ c: 'notas', doc }); store.gravarVarios(ops);
+    aoConcluir(doc.id);
   };
-  return html`<${Sheet} titulo=${'Fechar NF ' + nota.numero} aoFechar=${aoFechar} rodape=${html`<button className="btn soft sm" onClick=${() => { navigator.clipboard && navigator.clipboard.writeText(msg).then(() => toast('Mensagem copiada.')); }}>Copiar mensagem</button><button className="btn sm" style=${{ flex: 1 }} onClick=${concluir}>Concluir</button>`}>
-    <div className="grid2" style=${{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
-      <div className="kpi" style=${{ background: 'var(--ok-bg)' }}><span className="v" style=${{ color: 'var(--ok-t)' }}>${nfmt(rec)}</span><span className="l">recebidas</span></div>
-      <div className="kpi" style=${{ background: 'var(--mag-bg)' }}><span className="v" style=${{ color: 'var(--mag-t)' }}>${faltas.reduce((t, i) => t + i.qtd - i.k, 0)}</span><span className="l">faltando</span></div>
-      <div className="kpi" style=${{ background: 'var(--blue-bg)' }}><span className="v" style=${{ color: 'var(--blue-t)' }}>${sobras.reduce((t, i) => t + i.k - i.qtd, 0)}</span><span className="l">sobrando</span></div></div>
-    ${faltas.map(i => html`<div key=${i.key} className="note m">${i.desc}: nota ${i.qtd}, chegaram ${i.k} · ${brl((i.qtd - i.k) * i.vu)}</div>`)}
+  const lista = (arr, f) => html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13, background: 'var(--bg)', borderRadius: 14, padding: 12 }}>${arr.slice(0, 4).map(i => html`<span key=${i.key} style=${{ display: 'flex', justifyContent: 'space-between', gap: 8 }}><span>${i.desc}</span><b style=${{ whiteSpace: 'nowrap' }}>${f(i)}</b></span>`)}${arr.length > 4 && html`<span className="t2">+ ${plural(arr.length - 4, 'item', 'itens')}</span>`}</div>`;
+  return html`<${Sheet} titulo=${forcado ? 'Encerrar a nota?' : encerrar ? 'Concluir conferência' : 'Fechar viagem ' + nv} aoFechar=${aoFechar} rodape=${html`<button className=${'btn block' + (forcado ? ' dark' : '')} onClick=${confirmar}>${forcado ? 'Encerrar nota com falta' : encerrar ? 'Concluir e guardar no CD' : 'Fechar viagem e guardar no CD'}</button>`}>
+    ${forcado && html`<p style=${{ margin: 0, fontSize: 14, lineHeight: 1.5, color: 'var(--muted)' }}>Use quando a ${grupoEmpresa(nota.fornecedor)} avisar que não vem mais nada desta nota. O que não chegou vira <b style=${{ color: 'var(--navy)' }}>falta</b>, com o valor, para contestar.</p>`}
+    <div className="grid2">
+      <div className="kpi" style=${{ background: 'var(--bg)' }}><span className="v">${nfmt(qAgora)}</span><span className="l">peças nesta viagem entram no CD agora</span></div>
+      <div className="kpi" style=${{ background: 'var(--bg)' }}><span className="v" style=${{ color: forcado && qVem ? 'var(--mag-t)' : 'inherit' }}>${nfmt(qVem)}</span><span className="l">${forcado ? 'peças em falta · ' + brl(vVem) : 'peças ainda por vir'}</span></div></div>
+    ${aindaVem.length > 0 && html`<b style=${{ fontSize: 14 }}>${forcado ? 'Vai virar falta' : 'Ainda por vir'}</b>${lista(aindaVem, i => forcado ? 'falta ' + i.falta + ' · ' + brl(i.falta * (i.vu || 0)) : String(i.falta))}`}
+    ${sobras.length > 0 && html`<b style=${{ fontSize: 14 }}>Sobrando (fora da nota)</b>${lista(sobras, i => '+' + (i.tot - i.qtd))}`}
+    ${!encerrar && html`<div className="note" style=${{ background: 'var(--bg)', color: 'var(--navy)', fontWeight: 500 }}>A nota continua <b>aberta</b> esperando a próxima viagem. Nada vira falta ainda.</div>`}
     <label className="f"><span className="lb">Conferido por</span><input className="inp" value=${nome} onChange=${(e) => setNome(e.target.value)} /></label>
-    <label className="f"><span className="lb">Mensagem para o WhatsApp</span><textarea className="inp" readOnly rows="6" value=${msg}></textarea></label>
-    <div className="hint">As peças recebidas entram no CD ligadas a esta nota. Faltas e sobras viram pendências com valor, para contestar com o fornecedor.</div>
   </${Sheet}>`;
 }
 function DetalheNota({ ctx }) {
   const { ir, nav } = ctx; useStore();
-  const nota = store.pegar('notas', nav.p.id);
+  const nota = store.pegar('notas', nav.p.id); const [rel, setRel] = useState(false);
   if (!nota) return html`<${Tela} ctx=${ctx} titulo="Nota" voltar=${() => ir('receb')}><${Vazio}>Nota não encontrada.</${Vazio}></${Tela}>`;
-  const r = resumoNota(nota); const cont = nota.contagem || {};
-  return html`<${Tela} ctx=${ctx} eyebrow=${nota.local || 'Local não definido'} titulo=${'NF ' + nota.numero + ' · ' + nota.fornecedor} voltar=${() => nav.p.volta ? ir(nav.p.volta.aba, nav.p.volta.tela, nav.p.volta.p) : ir('receb')}>
+  const r = resumoNota(nota); const viagens = nota.viagens || [];
+  return html`<${Tela} ctx=${ctx} eyebrow=${nota.local || 'Local não definido'} titulo=${'NF ' + nota.numero + ' · ' + grupoEmpresa(nota.fornecedor)} voltar=${() => nav.p.volta ? ir(nav.p.volta.aba, nav.p.volta.tela, nav.p.volta.p) : ir('receb')}
+      direita=${['concluida', 'em_conferencia'].includes(nota.status) && html`<button className="hbtn" onClick=${() => setRel(true)}><${Ic} n="doc" s=${16} />Relatório</button>`}>
     <div className="card pad" style=${{ gap: 10 }}>
       <div className="t2">${statusNota(nota.status)[0]} · contrato ${nota.contrato || '—'} · conferente ${nota.conferente || '—'}${nota.concluidaEm ? ' · ' + fmtDataHora(nota.concluidaEm) : ''}</div>
+      ${viagens.length > 0 && html`<div className="t3">${viagens.map(v => 'Viagem ' + v.n + ' · ' + fmtDataCurta(dataLocal(new Date(v.em))) + ' · ' + nfmt(Object.values(v.recebido || {}).reduce((a, b) => a + b, 0)) + ' pç · ' + (v.por || '')).join('   |   ')}</div>`}
       <${BarraLocal} r=${r} /><${Num4} r=${r} />
     </div>
     <div className="sec">Peças da nota <span className="t2">${plural(nota.itens.length, 'item', 'itens')} · ${nfmt(r.qtd)} pç</span></div>
-    <div className="card">${r.itens.map(i => html`<${ItemNF} key=${i.key} i=${i} local=${nota.local} conferido=${cont[i.key]} />`)}</div>
+    <div className="card">${r.itens.map(i => html`<${ItemNF} key=${i.key} i=${i} local=${nota.local} />`)}</div>
+    ${rel && html`<${CompartilharRelatorio} nota=${nota} aoFechar=${() => setRel(false)} />`}
   </${Tela}>`;
 }
 /* ================= ABA 2 · CD (por local → nota → peça) ================= */
@@ -2145,6 +2181,175 @@ function App() {
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') { navigator.serviceWorker.register('sw.js').catch(() => {}); }
 ReactDOM.createRoot(document.getElementById('root')).render(html`<${App} />`);
+/* ================= RELATÓRIO DA CONFERÊNCIA (imagem e PDF) =================
+   Gerado no próprio celular: monta o relatório em HTML, fotografa com html2canvas e,
+   para o PDF, coloca as páginas A4 no jsPDF. Nada é enviado para servidor. */
+const LIB_H2C = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+const LIB_JSPDF = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+const esc = (t) => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const brlC = (v) => brl(v).replace(/,00$/, '');
+
+function dadosRelatorio(n) {
+  const concluida = n.status === 'concluida';
+  const rec = concluida ? recebidoNota(n) : recebidoAntes(n);
+  const itens = (n.itens || []).map(i => { const r = rec[i.key] || 0; return { codigo: i.codigo, desc: i.desc, qtd: i.qtd, rec: r, dif: r - i.qtd, vu: i.vu || 0 }; });
+  const totQ = itens.reduce((t, i) => t + i.qtd, 0), totR = itens.reduce((t, i) => t + i.rec, 0);
+  const faltas = itens.filter(i => i.dif < 0), sobras = itens.filter(i => i.dif > 0);
+  const faltaQ = faltas.reduce((t, i) => t - i.dif, 0), faltaV = faltas.reduce((t, i) => t - i.dif * i.vu, 0), sobraQ = sobras.reduce((t, i) => t + i.dif, 0);
+  let viagens = (n.viagens || []).map(v => ({ n: v.n, em: v.em, por: v.por || '', q: Object.values(v.recebido || {}).reduce((a, b) => a + b, 0) }));
+  if (!viagens.length && concluida) viagens = [{ n: 1, em: n.concluidaEm || n.criadoEm, por: n.conferente || '', q: totR }];
+  const situacao = !concluida ? ['RECEBIMENTO PARCIAL', 'parcial', 'Recebimento parcial'] : faltaQ ? ['CONFERIDA COM FALTA', 'falta', 'Conferida com falta'] : sobraQ ? ['CONFERIDA COM SOBRA', 'sobra', 'Conferida com sobra'] : ['CONFERIDA SEM DIFERENÇA', 'ok', 'Conferida sem diferença'];
+  const datas = viagens.map(v => dataLocal(new Date(v.em))).sort();
+  const periodo = !datas.length ? '—' : datas[0] === datas[datas.length - 1] ? fmtData(datas[0]) : fmtDataCurta(datas[0]) + ' a ' + fmtData(datas[datas.length - 1]);
+  let h = 0; String(n.id).split('').forEach(c => { h = (h * 31 + c.charCodeAt(0)) >>> 0; });
+  return { n, concluida, itens, totQ, totR, faltas, sobras, faltaQ, faltaV, sobraQ, viagens, situacao, periodo,
+    empresa: grupoEmpresa(n.fornecedor), conferente: (viagens[viagens.length - 1] || {}).por || n.conferente || '—',
+    codigo: (n.numero || 'NF') + '-' + h.toString(16).slice(-4).toUpperCase(), gerado: fmtData(hoje()) + ' ' + fmtHora(agoraISO()) };
+}
+const COR_SIT = { falta: '#9C3D6E', sobra: '#4A6491', ok: '#3E7A5E', parcial: '#B8962E' };
+const TXT_SIT = { falta: '#7A1556', sobra: '#243B8F', ok: '#10543A', parcial: '#5C4300' };
+function textoRelatorio(d) {
+  return 'CONFERÊNCIA DE RECEBIMENTO · ' + (d.n.local || '').toUpperCase() + '\nNF ' + d.n.numero + ' · ' + d.empresa + ' · ' + d.periodo +
+    '\nSituação: ' + d.situacao[2] + '\nPeças: ' + d.totR + ' recebidas de ' + d.totQ +
+    (d.faltas.length ? '\nFaltando: ' + d.faltas.map(i => i.desc + ' · ' + (-i.dif) + ' pç').join('; ') + ' · ' + brl(d.faltaV) : '') +
+    (d.sobras.length ? '\nSobrando: ' + d.sobras.map(i => i.desc + ' · ' + i.dif + ' pç').join('; ') : '') +
+    (d.viagens.length > 1 ? '\nViagens: ' + d.viagens.map(v => v.n + 'ª ' + fmtDataCurta(dataLocal(new Date(v.em))) + ' (' + v.q + ' pç)').join(', ') : '') + '\nConferente: ' + d.conferente;
+}
+function logoEmpresaHtml(d, z) {
+  const lg = LOGOS()[d.empresa.toLowerCase()];
+  return lg ? `<img src="${lg}" style="width:${z}px;height:${z}px;border-radius:${Math.round(z * 0.24)}px;display:block;border:1px solid #E6EAE0">`
+    : `<div style="width:${z}px;height:${z}px;border-radius:${Math.round(z * 0.24)}px;background:#F2F4EE;border:1px solid #E6EAE0;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:${Math.round(z * 0.32)}px;color:#13152B">${esc(iniciais(d.empresa))}</div>`;
+}
+// ---------- imagem (1080 px de largura) ----------
+function htmlImagem(d) {
+  const k = d.situacao[1]; const pct = d.totQ ? Math.round(d.totR / d.totQ * 1000) / 10 : 0;
+  const listaDif = (arr, tit, sinal) => !arr.length ? '' : `<div style="background:#fff;border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:9px">
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.1em;color:#4E5752">${tit}</div>
+    ${arr.slice(0, 5).map(i => `<div style="display:flex;justify-content:space-between;gap:10px;font-size:14px"><div><b>${esc(i.desc)}</b><div style="font-size:12px;color:#4E5752">nota ${i.qtd} · chegaram ${i.rec}</div></div><div style="text-align:right;white-space:nowrap"><b style="color:${TXT_SIT[sinal > 0 ? 'sobra' : 'falta']}">${sinal > 0 ? '+' : '−'}${Math.abs(i.dif)}</b>${sinal < 0 ? `<div style="font-size:12px;color:#4E5752">${brl(-i.dif * i.vu)}</div>` : ''}</div></div>`).join('')}
+    ${arr.length > 5 ? `<div style="font-size:12px;color:#4E5752">+ ${arr.length - 5} itens (veja o PDF)</div>` : ''}</div>`;
+  const semDif = d.itens.filter(i => i.dif === 0).length;
+  return `<div style="width:540px;background:#F2F4EE;font-family:'IBM Plex Sans',sans-serif;color:#13152B">
+  <div style="background:#212B2A;padding:22px 26px;display:flex;align-items:center;gap:14px">
+    <div style="flex:1"><div style="font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;letter-spacing:.16em;color:#AEC155">CONFERÊNCIA DE RECEBIMENTO</div>
+    <div style="font-size:24px;font-weight:700;color:#fff;margin-top:2px">NF ${esc(d.n.numero)} · ${esc(d.empresa)}</div>
+    <div style="font-size:12px;color:#C9CEC2;margin-top:2px">${esc(d.n.local || '')} · ${esc(d.periodo)}</div></div>${logoEmpresaHtml(d, 58)}</div>
+  <div style="padding:18px 22px;display:flex;flex-direction:column;gap:12px">
+    <div style="background:#fff;border-radius:16px;padding:14px 16px;display:flex;align-items:center;gap:12px"><span style="width:12px;height:12px;border-radius:999px;background:${COR_SIT[k]}"></span><b style="font-size:16px;flex:1">${d.situacao[2]}</b>${d.faltaV && d.concluida ? `<b style="font-size:16px;color:#7A1556">${brl(d.faltaV)}</b>` : ''}</div>
+    <div style="display:flex;gap:8px">${[[d.totQ, 'peças na nota', ''], [d.totR, d.concluida ? 'recebidas' : 'recebidas até agora', ''], d.concluida ? [d.faltaQ || d.sobraQ, d.faltaQ ? 'em falta' : d.sobraQ ? 'a mais' : 'diferença', d.faltaQ ? '#7A1556' : ''] : [d.totQ - d.totR, 'ainda por vir', '']].map(([v, l, c]) => `<div style="flex:1;background:#fff;border-radius:14px;padding:12px 14px"><div style="font-size:26px;font-weight:700;${c ? 'color:' + c : ''}">${nfmt(v)}</div><div style="font-size:11px;color:#4E5752">${l}</div></div>`).join('')}</div>
+    ${d.concluida ? listaDif(d.faltas, 'O QUE FALTOU', -1) + listaDif(d.sobras, 'O QUE SOBROU', 1) : ''}
+    <div style="background:#fff;border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;justify-content:space-between;font-size:13px"><span><b>${String(pct).replace('.', ',')}%</b> das peças recebidas</span><span style="color:#4E5752">${d.n.totalNota ? 'valor da nota ' + brl(d.n.totalNota) : ''}</span></div>
+      <div style="display:flex;height:10px;border-radius:999px;overflow:hidden;background:#E6EAE0"><div style="width:${Math.min(100, pct)}%;background:#13152B"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:#4E5752"><span>${d.itens.length} itens · <b style="color:#13152B">${semDif} sem diferença</b></span><span>${d.faltas.length ? d.faltas.length + (d.concluida ? ' com falta' : ' ainda por vir') : ''}</span></div></div>
+    ${d.viagens.length ? `<div style="display:flex;flex-wrap:wrap;gap:8px">${d.viagens.map(v => `<div style="flex:1;min-width:150px;background:#fff;border-radius:12px;padding:8px 12px;font-size:12px;color:#4E5752">Viagem ${v.n} · ${fmtDataCurta(dataLocal(new Date(v.em)))} · ${nfmt(v.q)} pç</div>`).join('')}</div>` : ''}
+    <div style="display:flex;align-items:center;gap:12px;padding-top:12px;margin-top:4px;border-top:1px solid #D7DBD0"><div style="background:#fff;border-radius:10px;padding:5px 8px"><img src="${window.__LOGO__}" style="height:28px;display:block"></div><div style="flex:1;font-size:11px;color:#4E5752;text-align:right">Conferente: ${esc(d.conferente)}<br>Controle de Peças · CCG Linha 4 · ${esc(d.gerado)}</div></div>
+  </div></div>`;
+}
+// ---------- PDF A4 (794 × 1123 px por página) ----------
+function paginasPDF(d) {
+  const rows = d.itens; const pags = []; let i = 0, primeira = true;
+  const extraViagens = Math.max(0, d.viagens.length - 2);
+  while (i < rows.length || !pags.length) {
+    const resta = rows.length - i;
+    const capUlt = (primeira ? 15 : 28) - (primeira ? extraViagens : 0), capMeio = (primeira ? 21 : 36) - (primeira ? extraViagens : 0);
+    if (resta <= capUlt) { pags.push({ ini: i, fim: rows.length, ultima: true }); i = rows.length; }
+    else { const q = Math.min(capMeio, resta - 1); pags.push({ ini: i, fim: i + q, ultima: false }); i += q; }
+    primeira = false;
+  }
+  const tot = pags.length; const k = d.situacao[1];
+  const TH = (al) => `padding:7px 8px;font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#4E5752;font-weight:600;text-align:${al};border-bottom:1.5px solid #13152B`;
+  const cab = (p) => `<div style="display:flex;align-items:center;gap:16px;padding-bottom:12px;border-bottom:3px solid #AEC155"><img src="${window.__LOGO__}" style="height:${p ? 34 : 46}px"><div style="flex:1;text-align:right"><div style="font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:600;letter-spacing:.16em;color:#5E7020">LINHA 4 · EXTENSÃO GÁVEA · CONTROLE DE PEÇAS</div><div style="font-size:${p ? 15 : 20}px;font-weight:700">${p ? 'NF ' + esc(d.n.numero) + ' · ' + esc(d.empresa) + ' · continuação' : 'Relatório de conferência de recebimento'}</div></div></div>`;
+  const kpi = (v, l, c, ult) => `<div style="flex:1;padding:12px 14px;${ult ? '' : 'border-right:1px solid #D7DBD0'}"><div style="font-size:21px;font-weight:700;line-height:1.1;${c ? 'color:' + c : ''}">${v}</div><div style="font-size:10px;color:#4E5752;margin-top:2px">${l}</div></div>`;
+  const info = (l, v, ult) => `<div style="padding:10px 12px;${ult ? '' : 'border-right:1px solid #EBEEE6'}"><div style="font-size:9px;color:#4E5752;text-transform:uppercase;letter-spacing:.08em;font-family:'IBM Plex Mono',monospace">${l}</div><div style="font-size:12px;font-weight:600;margin-top:3px">${v}</div></div>`;
+  const linha = (it, ix) => { const f = it.dif < 0, s = it.dif > 0; const bg = f ? '#FBF3F7' : s ? '#F3F5FA' : ix % 2 ? '#FAFBF8' : '#FFFFFF';
+    const sit = f ? `<span style="font-weight:600;color:${d.concluida ? '#7A1556' : '#5C4300'}">● ${d.concluida ? 'falta' : 'a receber'} ${-it.dif}</span>` : s ? `<span style="font-weight:600;color:#243B8F">● sobra ${it.dif}</span>` : '<span style="color:#3E7A5E;font-weight:600">ok</span>';
+    const dv = f && d.concluida ? `<b style="color:#7A1556">−${brl(-it.dif * it.vu)}</b>` : '<span style="color:#8A9289">—</span>';
+    return `<tr style="background:${bg}"><td style="padding:6px 8px;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#4E5752">${esc(it.codigo)}</td><td style="padding:6px 8px">${esc(it.desc)}</td><td style="padding:6px 8px;text-align:right">${nfmt(it.qtd)}</td><td style="padding:6px 8px;text-align:right;font-weight:600">${nfmt(it.rec)}</td><td style="padding:6px 8px">${sit}</td><td style="padding:6px 8px;text-align:right;color:#4E5752">${brl(it.vu)}</td><td style="padding:6px 8px;text-align:right">${dv}</td></tr>`; };
+  const ocorr = [d.faltas.length && d.concluida ? `<b>Falta:</b> ${d.faltas.map(i => esc(i.desc) + ' (nota ' + i.qtd + ', recebidas ' + i.rec + ')').join('; ')}. Pendência aberta para contestação com a ${esc(d.empresa)} no valor de ${brl(d.faltaV)}.` : '',
+    d.sobras.length ? `<b>Sobra:</b> ${d.sobras.map(i => esc(i.desc) + ' (+' + i.dif + ')').join('; ')} — peças fora da nota.` : '',
+    !d.concluida ? `<b>Recebimento parcial:</b> ainda faltam chegar ${nfmt(d.totQ - d.totR)} peças desta nota. A conferência continua nas próximas viagens.` : ''].filter(Boolean);
+  return pags.map((pg, p) => `<div style="width:794px;height:1123px;box-sizing:border-box;background:#fff;font-family:'IBM Plex Sans',sans-serif;color:#13152B;padding:46px 52px 34px;display:flex;flex-direction:column;gap:16px;font-size:11px">
+    ${cab(p)}
+    ${p === 0 ? `<div style="display:flex;gap:16px;align-items:center"><div style="flex:1;display:flex;gap:14px;align-items:center">${logoEmpresaHtml(d, 56)}<div><div style="font-size:24px;font-weight:700;line-height:1.1">NF ${esc(d.n.numero)} · ${esc(d.empresa)}</div><div style="font-size:11px;color:#4E5752;margin-top:3px">${esc(d.n.fornecedor || '')}${d.n.contrato ? ' · contrato ' + esc(d.n.contrato) : ''}</div></div></div>
+      <div style="text-align:right"><div style="display:inline-block;font-size:11px;font-weight:700;letter-spacing:.06em;padding:6px 12px;border-radius:6px;border:1.5px solid ${COR_SIT[k]};color:${TXT_SIT[k]}">${d.situacao[0]}</div>${d.n.emissao ? `<div style="font-size:10px;color:#4E5752;margin-top:6px">Emitida em ${esc(d.n.emissao)}</div>` : ''}</div></div>
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid #D7DBD0;border-radius:10px;overflow:hidden">${info('Local da aplicação', esc(d.n.local || '—'))}${info('Conferência', esc(d.periodo))}${info('Conferente', esc(d.conferente))}${info('Valor da nota', d.n.totalNota ? brl(d.n.totalNota) : '—', true)}</div>
+      <div style="display:flex;border:1px solid #D7DBD0;border-radius:10px;overflow:hidden">${kpi(nfmt(d.totQ), 'peças na nota')}${kpi(nfmt(d.totR), d.concluida ? 'peças recebidas' : 'recebidas até agora')}${d.concluida ? kpi(nfmt(d.faltaQ), 'peças em falta', d.faltaQ ? '#7A1556' : '') + kpi(nfmt(d.sobraQ), 'peças a mais', d.sobraQ ? '#243B8F' : '') + kpi(d.faltaV ? brlC(d.faltaV) : 'R$ 0', 'valor em falta', d.faltaV ? '#7A1556' : '', true) : kpi(nfmt(d.totQ - d.totR), 'ainda por vir', '#5C4300') + kpi(d.viagens.length, d.viagens.length === 1 ? 'viagem' : 'viagens', '', true)}</div>
+      ${d.viagens.length ? `<div><div style="font-size:12px;font-weight:700;margin-bottom:6px">Viagens</div><table style="width:100%;border-collapse:collapse;font-size:10.5px"><tr><th style="${TH('left')}">Viagem</th><th style="${TH('left')}">Data e hora</th><th style="${TH('left')}">Conferente</th><th style="${TH('right')}">Peças recebidas</th></tr>${d.viagens.map((v, ix) => `<tr style="background:${ix % 2 ? '#FAFBF8' : '#fff'}"><td style="padding:6px 8px">${v.n}</td><td style="padding:6px 8px">${fmtData(dataLocal(new Date(v.em)))} · ${fmtHora(v.em)}</td><td style="padding:6px 8px">${esc(v.por)}</td><td style="padding:6px 8px;text-align:right;font-weight:600">${nfmt(v.q)}</td></tr>`).join('')}</table></div>` : ''}` : ''}
+    <div><div style="font-size:12px;font-weight:700;margin-bottom:6px">Itens da nota${tot > 1 ? ` <span style="font-weight:400;color:#4E5752">· ${pg.ini + 1} a ${pg.fim} de ${d.itens.length}</span>` : ''}</div>
+      <table style="width:100%;border-collapse:collapse;font-size:10.5px"><tr><th style="${TH('left')}">Código</th><th style="${TH('left')}">Descrição</th><th style="${TH('right')}">Nota</th><th style="${TH('right')}">Recebido</th><th style="${TH('left')}">Situação</th><th style="${TH('right')}">Valor unit.</th><th style="${TH('right')}">Diferença</th></tr>
+      ${d.itens.slice(pg.ini, pg.fim).map((it, ix) => linha(it, pg.ini + ix)).join('')}
+      ${pg.ultima ? `<tr><td colspan="2" style="padding:8px;font-weight:700;border-top:1.5px solid #13152B">Total · ${d.itens.length} itens</td><td style="padding:8px;text-align:right;font-weight:700;border-top:1.5px solid #13152B">${nfmt(d.totQ)}</td><td style="padding:8px;text-align:right;font-weight:700;border-top:1.5px solid #13152B">${nfmt(d.totR)}</td><td style="border-top:1.5px solid #13152B"></td><td style="border-top:1.5px solid #13152B"></td><td style="padding:8px;text-align:right;font-weight:700;border-top:1.5px solid #13152B;${d.faltaV && d.concluida ? 'color:#7A1556' : ''}">${d.faltaV && d.concluida ? '−' + brl(d.faltaV) : '—'}</td></tr>` : ''}</table></div>
+    ${pg.ultima && ocorr.length ? `<div style="padding:10px 12px;border-radius:8px;background:#F7F8F4;border-left:3px solid ${COR_SIT[k]};font-size:10.5px;line-height:1.5">${ocorr.join('<br>')}</div>` : ''}
+    <div style="flex:1"></div>
+    ${pg.ultima ? `<div style="display:flex;gap:40px;padding:0 10px"><div style="flex:1;text-align:center"><div style="border-top:1px solid #13152B;margin-bottom:4px"></div><div style="font-size:10px;font-weight:600">${esc(d.conferente)}</div><div style="font-size:9px;color:#4E5752">Conferente · CCG</div></div><div style="flex:1;text-align:center"><div style="border-top:1px solid #13152B;margin-bottom:4px"></div><div style="font-size:10px;font-weight:600">&nbsp;</div><div style="font-size:9px;color:#4E5752">Motorista / representante ${esc(d.empresa)}</div></div></div>` : ''}
+    <div style="display:flex;justify-content:space-between;padding-top:10px;border-top:1px solid #D7DBD0;font-size:9px;color:#8A9289"><span>Gerado pelo app Controle de Peças · CCG · ${esc(d.gerado)}</span><span style="font-family:'IBM Plex Mono',monospace">CÓD. ${esc(d.codigo)} · página ${p + 1} de ${tot}</span></div>
+  </div>`);
+}
+async function fotografar(htmlStr, largura) {
+  await loadScript(LIB_H2C);
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;left:-20000px;top:0;width:' + largura + 'px;z-index:-1';
+  box.innerHTML = htmlStr; document.body.appendChild(box);
+  try {
+    await Promise.all([...box.querySelectorAll('img')].map(im => im.complete ? 0 : new Promise(r => { im.onload = im.onerror = r; })));
+    if (document.fonts && document.fonts.ready) await document.fonts.ready;
+    return await window.html2canvas(box.firstElementChild, { scale: 2, backgroundColor: '#ffffff', logging: false, useCORS: true });
+  } finally { box.remove(); }
+}
+async function gerarImagemRelatorio(d) { const c = await fotografar(htmlImagem(d), 540); return await new Promise(r => c.toBlob(r, 'image/png')); }
+async function gerarPDFRelatorio(d, aoProgresso) {
+  await loadScript(LIB_JSPDF);
+  const pdf = new window.jspdf.jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
+  const pags = paginasPDF(d);
+  for (let i = 0; i < pags.length; i++) {
+    aoProgresso && aoProgresso('Montando página ' + (i + 1) + ' de ' + pags.length + '…');
+    const c = await fotografar(pags[i], 794);
+    if (i) pdf.addPage();
+    pdf.addImage(c.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, 210, 297);
+  }
+  pdf.setProperties({ title: 'Conferência NF ' + d.n.numero + ' · ' + d.empresa, author: 'CCG · Controle de Peças' });
+  return pdf.output('blob');
+}
+async function compartilharArquivo(blob, nome, titulo) {
+  const file = new File([blob], nome, { type: blob.type });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: titulo }); return 'compartilhado'; }
+    catch (e) { if (e && e.name === 'AbortError') return 'cancelado'; }
+  }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nome; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000); return 'baixado';
+}
+function CompartilharRelatorio({ nota, concluiu, aoFechar }) {
+  const d = dadosRelatorio(nota);
+  const [ocup, setOcup] = useState(''); const [prev, setPrev] = useState(null);
+  useEffect(() => { let vivo = true; gerarImagemRelatorio(d).then(b => { if (vivo && b) setPrev(URL.createObjectURL(b)); }).catch(() => {}); return () => { vivo = false; }; }, []);
+  const base = 'Conferencia_NF' + (nota.numero || '') + '_' + d.empresa.replace(/\W+/g, '');
+  const fazer = async (tipo) => {
+    setOcup(tipo === 'img' ? 'Gerando imagem…' : 'Gerando PDF…');
+    try {
+      const blob = tipo === 'img' ? await gerarImagemRelatorio(d) : await gerarPDFRelatorio(d, setOcup);
+      const r = await compartilharArquivo(blob, base + (tipo === 'img' ? '.png' : '.pdf'), 'Conferência NF ' + nota.numero);
+      if (r === 'baixado') toast((tipo === 'img' ? 'Imagem' : 'PDF') + ' salvo no aparelho.');
+    } catch (e) { console.error(e); toast('Não foi possível gerar: ' + (e.message || 'verifique a internet na primeira vez.')); }
+    setOcup('');
+  };
+  const copiar = () => { const t = textoRelatorio(d); (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('Texto copiado.')).catch(() => toast('Não foi possível copiar.')); };
+  const k = d.situacao[1];
+  const titulo = concluiu ? (d.concluida ? 'Conferência concluída' : 'Viagem ' + d.viagens.length + ' fechada') : 'Relatório da conferência';
+  const sub = d.concluida ? nfmt(d.totR) + ' peças no CD' + (d.faltaQ ? ' · ' + d.faltaQ + ' em falta (' + brlC(d.faltaV) + ')' : '') + (d.sobraQ ? ' · ' + d.sobraQ + ' a mais' : '')
+    : nfmt(d.totR) + ' de ' + nfmt(d.totQ) + ' peças recebidas · nota continua aberta';
+  const btn = (tipo, ic, l, escuro) => html`<button disabled=${!!ocup} onClick=${tipo === 'txt' ? copiar : () => fazer(tipo)} style=${{ height: 84, borderRadius: 16, border: 'none', background: escuro ? 'var(--navy)' : 'var(--bg)', color: escuro ? '#fff' : 'var(--navy)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 13, fontWeight: 700, opacity: ocup ? 0.5 : 1 }}><${Ic} n=${ic} s=${24} c=${escuro ? '#AEC155' : '#13152B'} />${l}</button>`;
+  return html`<${Sheet} titulo=${titulo} aoFechar=${aoFechar} rodape=${html`<button className="btn block" onClick=${aoFechar}>${concluiu ? 'Concluir' : 'Fechar'}</button>`}>
+    <div style=${{ display: 'flex', alignItems: 'center', gap: 12, marginTop: -6 }}><span style=${{ width: 40, height: 40, borderRadius: 999, background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}><span className="dot" style=${{ width: 12, height: 12, background: COR_SIT[k] }}></span></span><span className="t2" style=${{ fontSize: 14 }}>${sub}</span></div>
+    <div style=${{ display: 'flex', gap: 12, alignItems: 'center', background: 'var(--bg)', borderRadius: 16, padding: 10 }}>
+      <div style=${{ width: 72, height: 84, borderRadius: 8, background: '#fff', overflow: 'hidden', flex: 'none', boxShadow: '0 1px 4px rgba(0,0,0,.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>${prev ? html`<img src=${prev} alt="Prévia do relatório" style=${{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top' }} />` : html`<span className="spin" style=${{ width: 18, height: 18, borderWidth: 2 }}></span>`}</div>
+      <span className="t2" style=${{ lineHeight: 1.45 }}>Prévia do relatório<br/><b style=${{ color: 'var(--navy)' }}>NF ${nota.numero} · ${d.empresa}</b><br/>${plural(d.itens.length, 'item', 'itens')} · ${plural(d.viagens.length, 'viagem', 'viagens')}</span></div>
+    <b style=${{ fontSize: 14 }}>Compartilhar relatório</b>
+    <div style=${{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 8 }}>${btn('img', 'image', 'Imagem', true)}${btn('pdf', 'doc', 'PDF', true)}${btn('txt', 'M8 4h10v12H8zM5 8v12h10', 'Copiar texto')}</div>
+    ${ocup ? html`<div style=${{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'center' }} className="t2"><span className="spin" style=${{ width: 18, height: 18, borderWidth: 2 }}></span>${ocup}</div>`
+      : html`<span className="t3" style=${{ textAlign: 'center', lineHeight: 1.45 }}>Abre o WhatsApp, e-mail ou outro app do celular. O relatório pode ser gerado de novo a qualquer momento pela nota.</span>`}
+  </${Sheet}>`;
+}
 
 </script>
 </body>
