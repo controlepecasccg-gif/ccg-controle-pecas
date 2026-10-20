@@ -737,7 +737,10 @@ function interpretarBloco(txt, nomeArquivo) {
   let totalNota = 0;
   const iImp = linhas.findIndex(l => /C[AÁ]LCULO DO IMPOSTO/i.test(l));
   if (iImp >= 0) linhas.slice(iImp, iImp + 6).forEach(l => (l.match(/\d{1,3}(?:\.\d{3})*,\d{2}/g) || []).forEach(v => { totalNota = Math.max(totalNota, parseNumBR(v)); }));
-  let fornecedor = /MILLS/i.test(tudo) ? 'Mills' : (/\bSH\b|SH FORMAS|SH F[OÔ]RMAS/i.test(tudo) ? 'SH' : '');
+  // empresa: lida do canhoto "RECEBEMOS DE <EMPRESA> OS PRODUTOS…"
+  const emit = ((tudo.match(/RECEBEMOS\s+DE\s+(.+?)\s+OS\s+PRODUTOS/i) || [])[1] || '').replace(/[^A-Za-zÀ-ú0-9&.\s-]/g, ' ').replace(/\s+/g, ' ').trim();
+  let fornecedor = /MILLS/i.test(emit || tudo) ? 'Mills' : (/^SH\b|SH FORMAS|SH F[OÔ]RMAS/i.test(emit) || /SH FORMAS|SH F[OÔ]RMAS/i.test(tudo) ? 'SH' : '');
+  if (!fornecedor && emit) fornecedor = emit.split(/\s|,/).filter(w => w.length > 1 && !/^(LTDA|S\.?A|EIRELI|ME|EPP|LOCACAO|LOCAÇÃO|SERVICOS|SERVIÇOS|COMERCIO|COMÉRCIO|DE|DA|DO|E)$/i.test(w)).slice(0, 2).map(w => w[0] + w.slice(1).toLowerCase()).join(' ');
   const emissao = (tudo.match(/(\d{2}\/\d{2}\/\d{4})/) || [])[1] || '';
   return { numero, contrato, qtdNota, totalNota, fornecedor, emissao, local: adivinharLocal((nomeArquivo || '') + ' ' + tudo), itens };
 }
@@ -925,7 +928,7 @@ function Sheet({ titulo, aoFechar, children, rodape }) {
       ${rodape && html`<div className="sf">${rodape}</div>`}
     </div></div>`;
 }
-const iniciais = (nome) => String(nome || '?').trim().split(/\s+/).filter(Boolean).slice(0, 2).map(p => p[0]).join('').toUpperCase() || '?';
+const iniciais = (nome) => String(nome || '?').trim().split(/\s+/).filter(w => /[A-Za-zÀ-ú]/.test(w)).slice(0, 2).map(p => p[0]).join('').toUpperCase() || '?';
 // Cabeçalho escuro. Sem "voltar": mostra status de sinal e o botão do perfil.
 function Hdr({ ctx, eyebrow, titulo, voltar, direita }) {
   if (voltar) return html`<header className="hdr sub">
@@ -1161,110 +1164,171 @@ async function imagemLeve(src) { // até ~700 KB por folha
   return r;
 }
 
+// Situação de uma nota para os filtros
+function situacaoNota(n) {
+  if (n.status !== 'concluida') return { aberta: true, falta: false, sobra: false };
+  const c = n.contagem || {};
+  const falta = (n.itens || []).some(i => c[i.key] != null && c[i.key] < i.qtd);
+  const sobra = (n.itens || []).some(i => c[i.key] != null && c[i.key] > i.qtd);
+  return { aberta: false, falta, sobra, ok: !falta && !sobra };
+}
+const grupoEmpresa = (f) => /mills/i.test(f || '') ? 'Mills' : /^\s*sh\b/i.test(f || '') ? 'SH' : 'Outras empresas';
+// Descobre se o arquivo é nota (DANFE) ou projeto, sem precisar ler a nota inteira
+async function tipoArquivo(f) {
+  const ext = (f.name.split('.').pop() || '').toLowerCase();
+  if (ext === 'dwg' || ext === 'dxf') return 'projeto';
+  if (/danfe|\bnf\b|nf[\s_-]*\d|nota/i.test(f.name)) return 'nota';
+  if (/\d{2}\.\d{3}\.\d{4}|projeto|folha|planta/i.test(f.name)) return 'projeto';
+  if (ext !== 'pdf') return 'nota'; // foto: normalmente é a nota
+  try {
+    await loadScript(LIBS.pdfjs); window.pdfjsLib.GlobalWorkerOptions.workerSrc = LIBS.pdfworker;
+    const pdf = await window.pdfjsLib.getDocument({ data: await f.arrayBuffer() }).promise;
+    const pg = await pdf.getPage(1); const vp = pg.getViewport({ scale: 1 });
+    const txt = (await pg.getTextContent()).items.map(i => i.str).join(' ');
+    if (/DANFE|NOTA FISCAL/i.test(txt)) return 'nota';
+    if (txt.replace(/\s/g, '').length > 300) return 'projeto';      // PDF de CAD com texto
+    if (Math.max(vp.width, vp.height) > 1000) return 'projeto';     // folha maior que A4
+    return 'nota';                                                  // A4 escaneado
+  } catch (e) { return 'nota'; }
+}
+function DefinirLocal({ titulo, aoFechar, aoSalvar }) {
+  const [l, setL] = useState('');
+  return html`<${Sheet} titulo=${titulo} aoFechar=${aoFechar} rodape=${html`<button className="btn block" disabled=${!l} onClick=${() => aoSalvar(l)}>Salvar</button>`}>
+    <div className="hint" style=${{ padding: 0 }}>O app não achou o local da aplicação no arquivo. Escolha onde ele vai ser usado.</div>
+    <${SelLocal} valor=${l} set=${setL} /></${Sheet}>`;
+}
+
 function TelaRecebimento({ ctx }) {
   const { usuario: u, ir } = ctx; useStore();
-  const [local, setLocal] = useState(() => { try { return localStorage.getItem('ccg_local_busca') || ''; } catch (e) { return ''; } });
-  const [arqs, setArqs] = useState([]); const [ocupado, setOcupado] = useState(false); const [over, setOver] = useState('');
-  const refNF = useRef(); const refPJ = useRef();
-  const setLoc = (v) => { setLocal(v); try { localStorage.setItem('ccg_local_busca', v); } catch (e) {} };
+  const [arqs, setArqs] = useState([]); const [ocupado, setOcupado] = useState(false); const [over, setOver] = useState(false);
+  const [filtro, setFiltro] = useState(() => { try { return sessionStorage.getItem('ccg_filtro_nf') || 'todas'; } catch (e) { return 'todas'; } });
+  const [fechados, setFechados] = useState({}); const [mais, setMais] = useState({}); const [locProj, setLocProj] = useState(null);
+  const ref = useRef();
   const upd = (id, d) => setArqs(a => a.map(x => x.id === id ? Object.assign({}, x, d) : x));
   const podeNotas = pode(u, 'notas');
+  const setF = (f) => { setFiltro(f); try { sessionStorage.setItem('ccg_filtro_nf', f); } catch (e) {} };
 
-  const subirNotas = async (files) => {
+  const lerNota = async (f, id) => {
+    const r = f.type === 'application/pdf' || /\.pdf$/i.test(f.name) ? await lerTextoPDF(f, (m) => upd(id, { msg: m })) : await lerTextoImagem(f, (m) => upd(id, { msg: m }));
+    const todasLidas = interpretarDanfe(r.texto, f.name);
+    if (!todasLidas.length) return upd(id, { st: 'erro', msg: 'Não consegui ler esta nota. Toque para cadastrar à mão.' });
+    const existentes = store.todos('notas');
+    const repetidas = todasLidas.filter(l => l.numero && existentes.some(n => n.numero === l.numero && grupoEmpresa(n.fornecedor) === grupoEmpresa(l.fornecedor || 'Outra')));
+    const lidas = todasLidas.filter(l => !repetidas.includes(l));
+    if (!lidas.length) { const n = existentes.find(x => x.numero === repetidas[0].numero); return upd(id, { st: 'ok', tipo: 'nota', ext: 'NF', notas: n ? [n.id] : null, msg: repetidas.map(l => 'NF ' + l.numero).join(', ') + ' já ' + (repetidas.length > 1 ? 'estavam' : 'estava') + ' no app · nada novo' }); }
+    const ops = lidas.map(l => {
+      const forn = l.fornecedor || 'Outra';
+      const d = { id: uid('nf'), numero: l.numero, fornecedor: forn, contrato: l.contrato, local: l.local, emissao: l.emissao, arquivo: f.name, metodo: r.metodo, qtdNota: l.qtdNota, totalNota: l.totalNota,
+        itens: l.itens.map(it => { const key = itemKey(forn, it.codigo); const cat = store.pegar('catalogo', key); return { key, codigo: it.codigo, desc: (cat && cat.desc) || it.desc, qtd: it.qtd, vu: it.vu, duvida: !!it.duvida }; }),
+        status: 'rascunho', contagem: {}, criadoEm: agoraISO(), criadoPor: u.nome, textoLido: r.texto.slice(0, 20000) };
+      if (validarNota(d).pronta) Object.assign(d, { status: 'liberada', liberadaEm: agoraISO(), liberadaPor: u.nome }); // leitura certinha: já fica a conferir
+      return { c: 'notas', doc: d };
+    });
+    store.gravarVarios(ops);
+    const revisar = ops.filter(o => o.doc.status === 'rascunho').length;
+    upd(id, { st: 'ok', tipo: 'nota', ext: 'NF', notas: ops.map(o => o.doc.id),
+      msg: ops.map(o => 'NF ' + (o.doc.numero || '?') + ' · ' + o.doc.fornecedor).join(', ') + (revisar ? ' · ' + plural(revisar, 'para revisar', 'para revisar') : ' · totais OK') + (repetidas.length ? ' · ' + repetidas.map(l => 'NF ' + l.numero).join(', ') + ' já estava no app' : '') });
+  };
+  const lerProjeto = async (f, id) => {
+    const ext = (f.name.split('.').pop() || '').toUpperCase(); const nomeBase = f.name.replace(/\.[^.]+$/, '');
+    const local = adivinharLocal(f.name);
+    upd(id, { tipo: 'projeto', ext: 'PROJ' });
+    if (ext === 'DWG' || ext === 'DXF') {
+      if (f.size > DWG_MAX_MB * 1048576) throw new Error('DWG maior que ' + DWG_MAX_MB + ' MB. Envie o PDF do projeto.');
+      const pj = { id: uid('pj'), nome: nomeBase, local, tipo: 'dwg', img: null, pontos: [], dwg: { nome: f.name, tamanho: f.size, partes: 0 }, criadoEm: agoraISO(), criadoPor: u.nome };
+      if (store.modo === 'firebase') { const url = await lerArquivoComo(f, 'url'); pj.dwg.partes = await store.salvarArquivo(pj.id, url, (m) => upd(id, { msg: m })); }
+      store.gravar('projetos', pj);
+      return upd(id, { st: 'ok', msg: 'DWG guardado' + (local ? ' · ' + local : '') + ' · para ver a planta, suba também o PDF', projs: [pj.id], semLocal: !local });
+    }
+    let ops;
+    if (ext === 'PDF') {
+      const { folhas, total } = await folhasDoPDF(f, (m) => upd(id, { msg: m }), 12);
+      ops = folhas.map((fl, i) => ({ c: 'projetos', doc: { id: uid('pj'), nome: nomeBase + (folhas.length > 1 ? ' · folha ' + (i + 1) + '/' + total : ''), local, tipo: 'pdf', img: fl.url, w: fl.w, h: fl.h, pontos: [], criadoEm: agoraISO(), criadoPor: u.nome } }));
+    } else { const fl = await imagemLeve(f); ops = [{ c: 'projetos', doc: { id: uid('pj'), nome: nomeBase, local, tipo: 'imagem', img: fl.url, w: fl.w, h: fl.h, pontos: [], criadoEm: agoraISO(), criadoPor: u.nome } }]; }
+    store.gravarVarios(ops);
+    upd(id, { st: 'ok', msg: 'PDF · ' + plural(ops.length, 'folha') + (local ? ' · ' + local : ''), projs: ops.map(o => o.doc.id), semLocal: !local });
+  };
+  const subir = async (files) => {
     files = [...files]; if (!files.length) return; setOcupado(true);
-    const novos = files.map(f => ({ id: uid('f'), nome: f.name, ext: /\.pdf$/i.test(f.name) ? 'PDF' : 'FOTO', tipo: 'nota', msg: 'Na fila…', st: 'fila' }));
+    const novos = files.map(f => ({ id: uid('f'), nome: f.name, ext: '…', msg: 'Na fila…', st: 'fila' }));
     setArqs(a => novos.concat(a));
     for (let i = 0; i < files.length; i++) {
       const f = files[i], id = novos[i].id;
       try {
-        upd(id, { msg: 'Abrindo…', st: 'lendo' });
-        const r = f.type === 'application/pdf' || /\.pdf$/i.test(f.name) ? await lerTextoPDF(f, (m) => upd(id, { msg: m })) : await lerTextoImagem(f, (m) => upd(id, { msg: m }));
-        const lidas = interpretarDanfe(r.texto, f.name);
-        if (!lidas.length) { upd(id, { st: 'erro', msg: 'Não encontrei itens. Toque para cadastrar à mão.' }); continue; }
-        const ops = lidas.map(l => ({ c: 'notas', doc: { id: uid('nf'), numero: l.numero, fornecedor: l.fornecedor || 'Mills', contrato: l.contrato, local: local || l.local, emissao: l.emissao, arquivo: f.name, metodo: r.metodo, qtdNota: l.qtdNota, totalNota: l.totalNota,
-          itens: l.itens.map(it => { const key = itemKey(l.fornecedor || 'Mills', it.codigo); const cat = store.pegar('catalogo', key); return { key, codigo: it.codigo, desc: (cat && cat.desc) || it.desc, qtd: it.qtd, vu: it.vu, duvida: !!it.duvida }; }), status: 'rascunho', contagem: {}, criadoEm: agoraISO(), criadoPor: u.nome, textoLido: r.texto.slice(0, 20000) } }));
-        store.gravarVarios(ops);
-        upd(id, { st: 'ok', msg: plural(ops.length, 'nota lida', 'notas lidas'), notas: ops.map(o => o.doc.id) });
-      } catch (e) { console.error(e); upd(id, { st: 'erro', msg: e.message || 'Falha na leitura.' }); }
+        upd(id, { st: 'lendo', msg: 'Abrindo…' });
+        const tipo = await tipoArquivo(f);
+        upd(id, { tipo, ext: tipo === 'nota' ? 'NF' : 'PROJ' });
+        if (tipo === 'nota') await lerNota(f, id); else await lerProjeto(f, id);
+      } catch (e) { console.error(e); upd(id, { st: 'erro', msg: e.message || 'Falha ao abrir o arquivo.' }); }
     }
     setOcupado(false);
   };
-  const subirProjetos = async (files) => {
-    files = [...files]; if (!files.length) return;
-    if (!local) return toast('Escolha o local da busca antes de subir o projeto.');
-    setOcupado(true);
-    for (const f of files) {
-      const id = uid('f'); const ext = (f.name.split('.').pop() || '').toUpperCase(); const nomeBase = f.name.replace(/\.[^.]+$/, '');
-      setArqs(a => [{ id, nome: f.name, ext, tipo: 'projeto', msg: 'Abrindo…', st: 'lendo' }].concat(a));
-      try {
-        if (ext === 'DWG' || ext === 'DXF') {
-          if (f.size > DWG_MAX_MB * 1048576) throw new Error('DWG maior que ' + DWG_MAX_MB + ' MB. Envie o PDF do projeto.');
-          const pj = { id: uid('pj'), nome: nomeBase, local, tipo: 'dwg', img: null, pontos: [], dwg: { nome: f.name, tamanho: f.size, partes: 0 }, criadoEm: agoraISO(), criadoPor: u.nome };
-          if (store.modo === 'firebase') { const url = await lerArquivoComo(f, 'url'); pj.dwg.partes = await store.salvarArquivo(pj.id, url, (m) => upd(id, { msg: m })); }
-          store.gravar('projetos', pj);
-          upd(id, { st: 'ok', msg: store.modo === 'firebase' ? 'DWG guardado · para ver a planta, suba também o PDF' : 'DWG registrado (no modo demonstração o arquivo não é guardado)', proj: pj.id });
-        } else if (ext === 'PDF') {
-          const { folhas, total } = await folhasDoPDF(f, (m) => upd(id, { msg: m }), 12);
-          const ops = folhas.map((fl, i) => ({ c: 'projetos', doc: { id: uid('pj'), nome: nomeBase + (folhas.length > 1 ? ' · folha ' + (i + 1) + '/' + total : ''), local, tipo: 'pdf', img: fl.url, w: fl.w, h: fl.h, pontos: [], criadoEm: agoraISO(), criadoPor: u.nome } }));
-          store.gravarVarios(ops);
-          upd(id, { st: 'ok', msg: plural(folhas.length, 'folha') + (total > folhas.length ? ' (das ' + total + ')' : ''), proj: ops[0].doc.id });
-        } else {
-          const fl = await imagemLeve(f); const pj = { id: uid('pj'), nome: nomeBase, local, tipo: 'imagem', img: fl.url, w: fl.w, h: fl.h, pontos: [], criadoEm: agoraISO(), criadoPor: u.nome };
-          store.gravar('projetos', pj); upd(id, { st: 'ok', msg: 'imagem do projeto', proj: pj.id });
-        }
-      } catch (e) { console.error(e); upd(id, { st: 'erro', msg: e.message || 'Falha ao abrir.' }); }
-    }
-    setOcupado(false);
+  const manual = () => { const d = { id: uid('nf'), numero: '', fornecedor: 'Mills', contrato: '', local: '', itens: [], status: 'rascunho', contagem: {}, criadoEm: agoraISO(), criadoPor: u.nome, metodo: 'manual', qtdNota: 0, totalNota: 0 }; store.gravar('notas', d); ir('receb', 'revisar', { id: d.id }); };
+  const abrirNota = (n) => ir('receb', n.status === 'rascunho' ? (podeNotas ? 'revisar' : 'nota') : n.status === 'concluida' ? 'nota' : (podeNotas ? 'conferir' : 'nota'), { id: n.id });
+  const tocarArquivo = (a) => {
+    if (a.st === 'erro' && a.tipo !== 'projeto') return podeNotas && manual();
+    if (a.notas && a.notas[0]) { const n = store.pegar('notas', a.notas[0]); if (n) abrirNota(n); return; }
+    if (a.projs) { if (a.semLocal && !(store.pegar('projetos', a.projs[0]) || {}).local) return setLocProj(a); ir('cd', 'projeto', { id: a.projs[0] }); }
   };
-  const manual = () => { const d = { id: uid('nf'), numero: '', fornecedor: 'Mills', contrato: '', local, itens: [], status: 'rascunho', contagem: {}, criadoEm: agoraISO(), criadoPor: u.nome, metodo: 'manual', qtdNota: 0, totalNota: 0 }; store.gravar('notas', d); ir('receb', 'revisar', { id: d.id }); };
 
-  const notas = store.todos('notas').sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''));
-  const rascunhos = notas.filter(n => n.status === 'rascunho').map(n => Object.assign({ v: validarNota(n) }, n));
-  const prontas = rascunhos.filter(n => n.v.pronta);
-  const andamento = notas.filter(n => n.status === 'liberada' || n.status === 'em_conferencia');
-  const concluidas = notas.filter(n => n.status === 'concluida').slice(0, 8);
-  const comecar = () => {
-    if (!prontas.length) { if (andamento[0]) ir('receb', 'conferir', { id: andamento[0].id }); return; }
-    store.gravarVarios(prontas.map(n => { const d = Object.assign({}, n, { status: 'liberada', liberadaEm: agoraISO(), liberadaPor: u.nome }); delete d.v; return { c: 'notas', doc: d }; }));
-    setArqs([]); ir('receb', 'conferir', { id: prontas[prontas.length - 1].id });
+  // filtros e grupos
+  const notas = store.todos('notas').map(n => Object.assign({ sit: situacaoNota(n) }, n));
+  const FILTROS = [
+    ['todas', 'Todas', 'var(--hint)', () => true],
+    ['conferir', 'A conferir', 'var(--y)', n => n.sit.aberta],
+    ['falta', 'Com falta', 'var(--mag)', n => n.sit.falta],
+    ['sobra', 'Com sobra', 'var(--blue)', n => n.sit.sobra],
+    ['ok', 'Tudo certo', 'var(--ok)', n => n.sit.ok]
+  ];
+  const fAtual = FILTROS.find(x => x[0] === filtro) || FILTROS[0];
+  const visiveis = notas.filter(fAtual[3]);
+  const ordem = (a, b) => (b.sit.aberta - a.sit.aberta) || (b.concluidaEm || b.criadoEm || '').localeCompare(a.concluidaEm || a.criadoEm || '');
+  const GRUPOS = [['Mills', 'MI', 'var(--navy)', 'var(--green)'], ['SH', 'SH', 'var(--green)', 'var(--navy)'], ['Outras empresas', '+', 'var(--soft)', 'var(--navy)']];
+  const linhaNota = (n, mostrarForn) => {
+    const c = n.contagem || {}; const conf = Object.keys(c).length;
+    let dot = 'var(--ok)', sub;
+    if (n.status === 'rascunho') { dot = 'var(--y)'; sub = 'revisar leitura · ' + validarNota(n).falta.join(', '); }
+    else if (n.status !== 'concluida') { dot = 'var(--y)'; sub = 'a conferir · ' + conf + ' de ' + (n.itens || []).length; }
+    else { dot = n.sit.falta ? 'var(--mag)' : n.sit.sobra ? 'var(--blue)' : 'var(--ok)'; sub = fmtDataCurta(dataLocal(new Date(n.concluidaEm || n.criadoEm))) + ' · ' + resumoFaltas(n); }
+    return html`<button key=${n.id} className="row" onClick=${() => abrirNota(n)}>
+      <span className="dot" style=${{ background: dot }}></span>
+      <span className="grow"><div className="t1">NF ${n.numero || '(sem número)'}${mostrarForn ? ' · ' + n.fornecedor : ''}</div><div className="t2">${n.local || 'sem local'} · ${sub}</div></span><span className="chev">›</span></button>`;
   };
-  const drop = (tipo) => ({
-    onDragOver: (e) => { e.preventDefault(); setOver(tipo); }, onDragLeave: () => setOver(''),
-    onDrop: (e) => { e.preventDefault(); setOver(''); if (ocupado) return; tipo === 'nf' ? subirNotas(e.dataTransfer.files) : subirProjetos(e.dataTransfer.files); }
-  });
-  const arqsVis = arqs.filter(a => a.st !== 'ok' || a.tipo === 'projeto');
 
   return html`<${Tela} ctx=${ctx} eyebrow="Controle de peças" titulo="Recebimento">
     ${store.modo === 'demo' && html`<div className="note y">Modo demonstração: dados de exemplo, só neste aparelho.</div>`}
-    ${podeNotas && html`<div className="card big">
-      <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}><span style=${{ fontSize: 18, fontWeight: 700 }}>Nova busca</span>
-        <select aria-label="Local da busca" value=${local} onChange=${(e) => setLoc(e.target.value)} style=${{ height: 36, borderRadius: 999, border: 'none', background: 'var(--bg)', fontSize: 13, fontWeight: 600, padding: '0 12px', maxWidth: '60%' }}>
-          <option value="">Local: ler da nota</option>${(config().locais || []).map(l => html`<option key=${l} value=${l}>${l}</option>`)}</select></div>
-      <input ref=${refNF} type="file" multiple accept="application/pdf,image/*" style=${{ display: 'none' }} onChange=${(e) => { subirNotas(e.target.files); e.target.value = ''; }} />
-      <input ref=${refPJ} type="file" multiple accept=".pdf,.dwg,.dxf,application/pdf,image/*" style=${{ display: 'none' }} onChange=${(e) => { subirProjetos(e.target.files); e.target.value = ''; }} />
-      <button className=${'drop main' + (over === 'nf' ? ' over' : '')} disabled=${ocupado} onClick=${() => refNF.current.click()} ...${drop('nf')}>
-        <${Ic} n="docup" s=${30} c="#5E7020" /><b>Notas fiscais</b><span className="t2">PDF ou foto do DANFE · pode subir várias</span></button>
-      <button className=${'drop' + (over === 'pj' ? ' over' : '')} disabled=${ocupado} onClick=${() => refPJ.current.click()} ...${drop('pj')}>
-        <${Ic} n="map" s=${30} c="#4E5752" /><b>Projetos</b><span className="t2">PDF ou DWG · todas as folhas</span></button>
-      ${(arqsVis.length > 0 || rascunhos.length > 0) && html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        ${arqsVis.map(a => html`<button key=${a.id} className="file" onClick=${() => { if (a.st === 'erro' && a.tipo === 'nota') manual(); else if (a.proj) ir('cd', 'projeto', { id: a.proj }); }}>
-          <span className="ext">${a.ext}</span><span className="grow" style=${{ fontSize: 13 }}><b>${a.nome}</b><br/><span className="t2">${a.msg}</span></span>
-          ${a.st === 'lendo' && html`<span className="spin"></span>`}${a.st === 'ok' && html`<b style=${{ color: 'var(--ok)' }}>✓</b>`}${a.st === 'erro' && html`<b style=${{ color: 'var(--mag)' }}>!</b>`}</button>`)}
-        ${rascunhos.map(n => html`<button key=${n.id} className="file" onClick=${() => ir('receb', 'revisar', { id: n.id })}>
-          <span className="ext" style=${{ background: n.v.pronta ? 'var(--green-bg)' : 'var(--y-bg)', color: n.v.pronta ? 'var(--green-t)' : 'var(--y-t)' }}>NF</span>
-          <span className="grow" style=${{ fontSize: 13 }}><b>NF ${n.numero || '(sem número)'}</b> · ${plural((n.itens || []).length, 'item', 'itens')}<br/><span className="t2">${n.local || 'sem local'} · ${n.v.pronta ? 'totais OK' : 'revisar: ' + n.v.falta.join(', ')}</span></span>
-          ${n.v.pronta ? html`<b style=${{ color: 'var(--ok)' }}>✓</b>` : html`<span className="tag y">Revisar</span>`}</button>`)}
-      </div>`}
-      <button className="btn block" disabled=${ocupado || (!prontas.length && !andamento.length)} onClick=${comecar}>${ocupado ? 'Lendo arquivos…' : 'Começar conferência'}</button>
-      ${rascunhos.length > prontas.length && html`<div className="hint">Notas marcadas "Revisar" ficam de fora até você conferir a leitura.</div>`}
-      <button className="link" style=${{ alignSelf: 'center', marginTop: -6 }} onClick=${manual}>Cadastrar nota à mão</button>
-    </div>`}
-    <div className="sec">Em andamento</div>
-    <div className="card">${andamento.length ? andamento.map(n => { const conf = Object.keys(n.contagem || {}).length; return html`<button key=${n.id} className="row" onClick=${() => ir('receb', podeNotas ? 'conferir' : 'nota', { id: n.id })}>
-      <span className="dot" style=${{ background: 'var(--y)' }}></span><span className="grow"><div className="t1">NF ${n.numero} · ${n.fornecedor}</div><div className="t2">${n.local} · ${conf} de ${n.itens.length} conferidos</div></span><span className="chev">›</span></button>`; }) : html`<${Vazio}>Nenhuma conferência aberta.</${Vazio}>`}</div>
-    ${concluidas.length > 0 && html`<div className="sec">Concluídas</div>
-    <div className="card">${concluidas.map(n => html`<button key=${n.id} className="row" onClick=${() => ir('receb', 'nota', { id: n.id })}>
-      <span className="dot" style=${{ background: 'var(--ok)' }}></span><span className="grow"><div className="t1">NF ${n.numero} · ${n.fornecedor}</div><div className="t2">${n.local} · ${fmtDataCurta(dataLocal(new Date(n.concluidaEm || n.criadoEm)))} · ${resumoFaltas(n)}</div></span><span className="chev">›</span></button>`)}</div>`}
+    ${podeNotas && html`
+      <input ref=${ref} type="file" multiple accept=".pdf,.dwg,.dxf,application/pdf,image/*" style=${{ display: 'none' }} onChange=${(e) => { subir(e.target.files); e.target.value = ''; }} />
+      <button className=${'drop main' + (over ? ' over' : '')} style=${{ minHeight: 112, borderRadius: 18 }} disabled=${ocupado} onClick=${() => ref.current.click()}
+        onDragOver=${(e) => { e.preventDefault(); setOver(true); }} onDragLeave=${() => setOver(false)} onDrop=${(e) => { e.preventDefault(); setOver(false); if (!ocupado) subir(e.dataTransfer.files); }}>
+        ${ocupado ? html`<span className="spin"></span><b>Lendo arquivos…</b><span className="t2">aguarde nesta tela</span>` : html`<${Ic} n=${ICONS.upload} s=${30} c="#5E7020" /><b>Subir notas e projetos</b><span className="t2">PDF, foto ou DWG · pode mandar tudo junto</span>`}</button>
+      ${arqs.length > 0 && html`<div className="card pad" style=${{ gap: 8, padding: 12 }}>
+        ${arqs.map(a => html`<button key=${a.id} className="file" onClick=${() => tocarArquivo(a)}>
+          <span className="ext" style=${a.tipo === 'nota' ? { background: a.st === 'ok' && !/revisar/.test(a.msg) ? 'var(--green-bg)' : 'var(--y-bg)', color: a.st === 'ok' && !/revisar/.test(a.msg) ? 'var(--green-t)' : 'var(--y-t)' } : null}>${a.ext}</span>
+          <span className="grow" style=${{ fontSize: 13, minWidth: 0 }}><b style=${{ wordBreak: 'break-all' }}>${a.nome}</b><br/><span className="t2">${a.msg}${a.semLocal ? ' · toque para escolher o local' : ''}</span></span>
+          ${a.st === 'lendo' && html`<span className="spin"></span>`}${a.st === 'ok' && html`<b style=${{ color: a.semLocal || /revisar/.test(a.msg) ? 'var(--y)' : 'var(--ok)' }}>${a.semLocal || /revisar/.test(a.msg) ? '!' : '✓'}</b>`}${a.st === 'erro' && html`<b style=${{ color: 'var(--mag)' }}>!</b>`}</button>`)}
+        ${!ocupado && html`<button className="link" style=${{ alignSelf: 'flex-end', color: 'var(--muted)', padding: '4px' }} onClick=${() => setArqs([])}>Limpar lista</button>`}
+      </div>`}`}
+    <div className="chips" style=${{ flexWrap: 'nowrap', overflowX: 'auto', paddingBottom: 2 }}>${FILTROS.map(([id, l, cor, fn]) => html`<button key=${id} className=${'chip' + (filtro === id ? ' on' : '')} style=${{ flex: 'none', display: 'flex', alignItems: 'center', gap: 6 }} onClick=${() => setF(id)}>
+      <span className="dot" style=${{ width: 8, height: 8, background: cor }}></span>${l}<span style=${{ opacity: 0.7 }}>${notas.filter(fn).length}</span></button>`)}</div>
+    <div className="sec">${filtro === 'todas' ? 'Notas por empresa' : fAtual[1]}<span className="t2">${plural(visiveis.length, 'nota')}</span></div>
+    ${GRUPOS.map(([g, sigla, bg, fg]) => {
+      const lista = visiveis.filter(n => grupoEmpresa(n.fornecedor) === g).sort(ordem); if (!lista.length) return null;
+      const ab = !fechados[g]; const abertas = notas.filter(n => grupoEmpresa(n.fornecedor) === g && n.sit.aberta).length;
+      const outras = g === 'Outras empresas' ? [...new Set(lista.map(n => n.fornecedor))].join(', ') : '';
+      const lim = mais[g] ? lista : lista.slice(0, 8);
+      return html`<div key=${g} className="card">
+        <button className="row" style=${{ borderBottom: ab ? '1px solid var(--line2)' : 'none' }} aria-expanded=${ab} onClick=${() => setFechados(Object.assign({}, fechados, { [g]: ab }))}>
+          <span style=${{ width: 40, height: 40, borderRadius: 12, background: bg, color: fg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, flex: 'none' }}>${sigla}</span>
+          <span className="grow"><div style=${{ fontSize: 16, fontWeight: 700 }}>${g}</div><div className="t2">${plural(lista.length, 'nota')}${outras ? ' · ' + outras : ''}</div></span>
+          ${filtro === 'todas' && abertas > 0 && html`<span className="tag y">${abertas} a conferir</span>`}
+          <span style=${{ fontSize: 18, color: 'var(--hint)' }}>${ab ? '▴' : '▾'}</span></button>
+        ${ab && lim.map(n => linhaNota(n, g === 'Outras empresas'))}
+        ${ab && lista.length > lim.length && html`<button className="link" style=${{ padding: '12px 16px' }} onClick=${() => setMais(Object.assign({}, mais, { [g]: true }))}>Ver todas (${lista.length})</button>`}
+      </div>`; })}
+    ${!visiveis.length && html`<div className="card"><${Vazio}>${notas.length ? 'Nenhuma nota neste filtro.' : 'Nenhuma nota ainda. Suba os PDFs das notas no campo acima.'}</${Vazio}></div>`}
+    ${podeNotas && html`<button className="link" style=${{ alignSelf: 'center' }} onClick=${manual}>Cadastrar nota à mão</button>`}
+    ${locProj && html`<${DefinirLocal} titulo="Local do projeto" aoFechar=${() => setLocProj(null)} aoSalvar=${(l) => { store.gravarVarios(locProj.projs.map(id => ({ c: 'projetos', doc: Object.assign({}, store.pegar('projetos', id), { local: l }) }))); upd(locProj.id, { semLocal: false, msg: locProj.msg + ' · ' + l }); setLocProj(null); toast('Local salvo.'); }} />`}
   </${Tela}>`;
 }
 
@@ -1294,7 +1358,7 @@ function RevisarNota({ ctx }) {
     <div className="card pad">
       <div className="grid2">
         <label className="f"><span className="lb">Nº da nota</span><input className="inp" value=${n.numero} onChange=${(e) => set('numero', e.target.value.replace(/\D/g, ''))} /></label>
-        <label className="f"><span className="lb">Fornecedor</span><select className="inp" value=${n.fornecedor} onChange=${(e) => set('fornecedor', e.target.value)}>${(config().fornecedores || FORNECEDORES_PADRAO).map(f => html`<option key=${f}>${f}</option>`)}</select></label>
+        <label className="f"><span className="lb">Fornecedor</span><select className="inp" value=${n.fornecedor} onChange=${(e) => set('fornecedor', e.target.value)}>${[...new Set((config().fornecedores || FORNECEDORES_PADRAO).concat([n.fornecedor || 'Outra']))].map(f => html`<option key=${f}>${f}</option>`)}</select></label>
       </div>
       <label className="f"><span className="lb">Local da aplicação</span><${SelLocal} valor=${n.local} set=${(x) => set('local', x)} /></label>
       <div className="grid2">
