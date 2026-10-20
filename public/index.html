@@ -1011,6 +1011,7 @@ function Entrar({ aoEntrar, fb }) {
   const [email, setEmail] = useState(''); const [senha, setSenha] = useState(''); const [ver, setVer] = useState(false);
   const [erro, setErro] = useState(''); const [carregando, setCarregando] = useState(false);
   const [perfil, setPerfil] = useState('escritorio'); const [nome, setNome] = useState(''); const [local, setLocal] = useState('Passagem de emergência');
+  const online = useOnline();
   const topo = html`<div className="top">
     <span className="tile"><${Ic} n="box" s=${30} c="#13152B" /></span>
     <div style=${{ display: 'flex', flexDirection: 'column', gap: 6 }}><span className="eyebrow">CCG · Linha 4</span><h1>Controle de Peças</h1></div></div>`;
@@ -1020,7 +1021,7 @@ function Entrar({ aoEntrar, fb }) {
       if (!email.trim() || !senha) return setErro('Preencha e-mail e senha.');
       setErro(''); setCarregando(true);
       try { await fb.auth.signInWithEmailAndPassword(email.trim(), senha); }
-      catch (e) { setErro(/api-key|network/i.test(e.code || '') ? 'Sem conexão com o servidor. Verifique a internet e tente de novo.' : 'E-mail ou senha incorretos.'); }
+      catch (e) { setErro(/network/i.test(e.code || '') || !navigator.onLine ? 'Sem conexão. Para entrar é preciso internet (só na primeira vez neste celular).' : /api-key/i.test(e.code || '') ? 'Problema na configuração do app. Avise o escritório.' : /too-many/i.test(e.code || '') ? 'Muitas tentativas. Espere alguns minutos.' : 'E-mail ou senha incorretos.'); }
       setCarregando(false);
     };
     const esqueci = async () => { if (!email.trim()) return setErro('Digite seu e-mail acima para receber o link.'); try { await fb.auth.sendPasswordResetEmail(email.trim()); setErro('Enviamos um link para ' + email.trim() + ' criar uma nova senha.'); } catch (e) { setErro('Não foi possível enviar o e-mail. Confira o endereço.'); } };
@@ -1029,6 +1030,7 @@ function Entrar({ aoEntrar, fb }) {
         <label className="f"><span className="lb">E-mail</span><input className="inp" type="email" inputmode="email" autocomplete="username" value=${email} onChange=${(e) => setEmail(e.target.value)} /></label>
         <label className="f" style=${{ position: 'relative' }}><span className="lb">Senha</span><input className="inp" type=${ver ? 'text' : 'password'} autocomplete="current-password" style=${{ paddingRight: 92 }} value=${senha} onChange=${(e) => setSenha(e.target.value)} />
           <button type="button" onClick=${() => setVer(!ver)} style=${{ position: 'absolute', right: 8, bottom: 6, height: 40, border: 'none', background: 'none', fontSize: 14, fontWeight: 600, color: 'var(--muted)' }}>${ver ? 'Esconder' : 'Mostrar'}</button></label>
+        ${!online && html`<div className="note y">Sem internet. Para entrar a primeira vez neste celular precisa de sinal. Depois de entrar, o app abre e funciona sem internet.</div>`}
         ${erro && html`<div className="note y">${erro}</div>`}
         <button type="submit" className="btn block" style=${{ marginTop: 8 }} disabled=${carregando}>${carregando ? 'Entrando…' : 'Entrar'}</button>
         <button type="button" className="link" style=${{ alignSelf: 'center' }} onClick=${esqueci}>Esqueci a senha</button>
@@ -1529,10 +1531,33 @@ function TelaConferencia({ ctx }) {
     ${folha && folha.t === 'relatorio' && html`<${CompartilharRelatorio} nota=${nota} aoFechar=${() => setFolha(null)} />`}
   </${Tela}>`;
 }
+// Assinatura com o dedo (ou mouse). Devolve a imagem em PNG.
+function Assinatura({ rotulo, valor, set }) {
+  const ref = useRef(); const st = useRef({ des: false, vazio: !valor });
+  useEffect(() => {
+    const c = ref.current; const r = c.getBoundingClientRect(); const k = 2;
+    c.width = Math.round(r.width * k); c.height = Math.round(r.height * k);
+    const g = c.getContext('2d'); g.scale(k, k); g.lineWidth = 2.4; g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = '#13152B';
+    if (valor) { const im = new Image(); im.onload = () => g.drawImage(im, 0, 0, r.width, r.height); im.src = valor; }
+  }, []);
+  const pos = (e) => { const r = ref.current.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  const ini = (e) => { e.preventDefault(); ref.current.setPointerCapture(e.pointerId); st.current.des = true; const g = ref.current.getContext('2d'); const [x, y] = pos(e); g.beginPath(); g.moveTo(x, y); g.lineTo(x + 0.1, y + 0.1); g.stroke(); };
+  const mov = (e) => { if (!st.current.des) return; e.preventDefault(); const g = ref.current.getContext('2d'); const [x, y] = pos(e); g.lineTo(x, y); g.stroke(); st.current.vazio = false; };
+  const fim = () => { if (!st.current.des) return; st.current.des = false; st.current.vazio = false; set(ref.current.toDataURL('image/png')); };
+  const limpar = () => { const c = ref.current; c.getContext('2d').clearRect(0, 0, c.width, c.height); st.current.vazio = true; set(null); };
+  return html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}><span className="lb" style=${{ fontSize: 14, fontWeight: 600 }}>${rotulo}</span><button className="link" style=${{ padding: 0, color: 'var(--muted)' }} onClick=${limpar}>Limpar</button></div>
+    <div style=${{ position: 'relative', borderRadius: 14, border: '1px dashed #B9BFB2', background: '#FAFBF8', height: 150 }}>
+      <canvas ref=${ref} aria-label=${'Assinatura: ' + rotulo} style=${{ width: '100%', height: '100%', touchAction: 'none', display: 'block', borderRadius: 14 }} onPointerDown=${ini} onPointerMove=${mov} onPointerUp=${fim} onPointerCancel=${fim} onPointerLeave=${fim}></canvas>
+      <span style=${{ position: 'absolute', left: 16, right: 16, bottom: 34, borderTop: '1px solid #D7DBD0', pointerEvents: 'none' }}></span>
+      ${!valor && html`<span className="t3" style=${{ position: 'absolute', left: 0, right: 0, bottom: 12, textAlign: 'center', pointerEvents: 'none' }}>assine aqui com o dedo</span>`}
+    </div></div>`;
+}
 // Fecha a viagem atual (peças entram no CD). Com encerrar=true, fecha a nota: o que não veio vira falta.
 function FecharViagem({ ctx, nota, itens, encerrar, forcado, aoFechar, aoConcluir }) {
   const { usuario: u } = ctx;
   const [nome, setNome] = useState(u.nome);
+  const [assin, setAssin] = useState(null); const [sigConf, setSigConf] = useState(null); const [sigMot, setSigMot] = useState(null); const [motNome, setMotNome] = useState('');
   const nv = (nota.viagens || []).length + 1;
   const agora = itens.filter(i => i.agora > 0); const qAgora = agora.reduce((t, i) => t + i.agora, 0);
   const aindaVem = itens.filter(i => i.tot < i.qtd).map(i => Object.assign({ falta: i.qtd - i.tot }, i));
@@ -1543,6 +1568,7 @@ function FecharViagem({ ctx, nota, itens, encerrar, forcado, aoFechar, aoConclui
     agora.forEach(i => { recebido[i.key] = i.agora; ops.push(movimento('entrada', i.key, i.agora, 'NF', 'CD', nota.id, nome, { nf: nota.id, viagem: nv })); });
     const viagens = (nota.viagens || []).concat(qAgora || !(nota.viagens || []).length ? [{ n: nv, em: agoraISO(), por: nome, recebido }] : []);
     const doc = Object.assign({}, nota, { viagens, contagem: {}, status: 'em_conferencia', conferente: nome });
+    if (assin === 'sim' && (sigConf || sigMot)) doc.assinaturas = (nota.assinaturas || []).concat([{ viagem: qAgora || !(nota.viagens || []).length ? nv : null, encerramento: !!encerrar, em: agoraISO(), confNome: nome, conf: sigConf, motNome: motNome.trim(), mot: sigMot }]);
     if (encerrar) {
       aindaVem.forEach(i => ops.push({ c: 'pendencias', doc: { id: uid('pd'), tipo: 'falta', origem: 'NF ' + nota.numero, ref: nota.id, local: 'Recebimento', key: i.key, qtd: i.falta, valor: i.falta * (i.vu || 0), status: 'aberta', criadoEm: agoraISO(), criadoPor: nome, obs: 'Nota ' + i.qtd + ', chegaram ' + i.tot } }));
       sobras.forEach(i => ops.push({ c: 'pendencias', doc: { id: uid('pd'), tipo: 'sobra', origem: 'NF ' + nota.numero, ref: nota.id, local: 'Recebimento', key: i.key, qtd: i.tot - i.qtd, valor: 0, status: 'aberta', criadoEm: agoraISO(), criadoPor: nome, obs: 'Nota ' + i.qtd + ', chegaram ' + i.tot } }));
@@ -1552,7 +1578,7 @@ function FecharViagem({ ctx, nota, itens, encerrar, forcado, aoFechar, aoConclui
     aoConcluir(doc.id);
   };
   const lista = (arr, f) => html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13, background: 'var(--bg)', borderRadius: 14, padding: 12 }}>${arr.slice(0, 4).map(i => html`<span key=${i.key} style=${{ display: 'flex', justifyContent: 'space-between', gap: 8 }}><span>${i.desc}</span><b style=${{ whiteSpace: 'nowrap' }}>${f(i)}</b></span>`)}${arr.length > 4 && html`<span className="t2">+ ${plural(arr.length - 4, 'item', 'itens')}</span>`}</div>`;
-  return html`<${Sheet} titulo=${forcado ? 'Encerrar a nota?' : encerrar ? 'Concluir conferência' : 'Fechar viagem ' + nv} aoFechar=${aoFechar} rodape=${html`<button className=${'btn block' + (forcado ? ' dark' : '')} onClick=${confirmar}>${forcado ? 'Encerrar nota com falta' : encerrar ? 'Concluir e guardar no CD' : 'Fechar viagem e guardar no CD'}</button>`}>
+  return html`<${Sheet} titulo=${forcado ? 'Encerrar a nota?' : encerrar ? 'Concluir conferência' : 'Fechar viagem ' + nv} aoFechar=${aoFechar} rodape=${html`<button className=${'btn block' + (forcado ? ' dark' : '')} disabled=${!assin || (assin === 'sim' && !sigConf && !sigMot)} onClick=${confirmar}>${forcado ? 'Encerrar nota com falta' : encerrar ? 'Concluir e guardar no CD' : 'Fechar viagem e guardar no CD'}</button>`}>
     ${forcado && html`<p style=${{ margin: 0, fontSize: 14, lineHeight: 1.5, color: 'var(--muted)' }}>Use quando a ${grupoEmpresa(nota.fornecedor)} avisar que não vem mais nada desta nota. O que não chegou vira <b style=${{ color: 'var(--navy)' }}>falta</b>, com o valor, para contestar.</p>`}
     <div className="grid2">
       <div className="kpi" style=${{ background: 'var(--bg)' }}><span className="v">${nfmt(qAgora)}</span><span className="l">peças nesta viagem entram no CD agora</span></div>
@@ -1561,6 +1587,15 @@ function FecharViagem({ ctx, nota, itens, encerrar, forcado, aoFechar, aoConclui
     ${sobras.length > 0 && html`<b style=${{ fontSize: 14 }}>Sobrando (fora da nota)</b>${lista(sobras, i => '+' + (i.tot - i.qtd))}`}
     ${!encerrar && html`<div className="note" style=${{ background: 'var(--bg)', color: 'var(--navy)', fontWeight: 500 }}>A nota continua <b>aberta</b> esperando a próxima viagem. Nada vira falta ainda.</div>`}
     <label className="f"><span className="lb">Conferido por</span><input className="inp" value=${nome} onChange=${(e) => setNome(e.target.value)} /></label>
+    <div style=${{ display: 'flex', flexDirection: 'column', gap: 8 }}><b style=${{ fontSize: 14 }}>Assinaturas no relatório</b>
+      <div style=${{ display: 'flex', background: 'var(--soft)', borderRadius: 14, padding: 4, gap: 4 }}>${[['sim', 'Assinar com o dedo'], ['nao', 'Sem assinatura']].map(([k, l]) => html`<button key=${k} aria-pressed=${assin === k} onClick=${() => setAssin(k)} style=${{ flex: 1, minHeight: 44, borderRadius: 11, border: 'none', fontSize: 14, fontWeight: 600, background: assin === k ? '#fff' : 'transparent', boxShadow: assin === k ? '0 1px 3px rgba(0,0,0,.12)' : 'none' }}>${l}</button>`)}</div>
+      ${!assin && html`<span className="t3">Escolha uma opção para continuar.</span>`}
+      ${assin === 'nao' && html`<span className="t3">O relatório sai sem o campo de assinaturas.</span>`}
+    </div>
+    ${assin === 'sim' && html`<${Assinatura} rotulo=${'Conferente · ' + (nome || '')} valor=${sigConf} set=${setSigConf} />
+      <label className="f"><span className="lb">Motorista / representante ${grupoEmpresa(nota.fornecedor)}</span><input className="inp" placeholder="Nome (opcional)" value=${motNome} onChange=${(e) => setMotNome(e.target.value)} /></label>
+      <${Assinatura} rotulo="Assinatura do motorista" valor=${sigMot} set=${setSigMot} />
+      <span className="t3">Pode assinar só um dos dois. As assinaturas aparecem no PDF desta conferência.</span>`}
   </${Sheet}>`;
 }
 function DetalheNota({ ctx }) {
@@ -2160,20 +2195,24 @@ function App() {
           if (!user) { setUsuario(null); setEstado('pronto'); return; }
           store.iniciarFirebase(fsdb);
           const email = (user.email || '').toLowerCase(); const id = email.replace(/[^a-z0-9]/g, '_');
-          let perfil = null;
-          try { const d = await fsdb.collection('usuarios').doc(id).get(); if (d.exists) perfil = d.data(); } catch (e) {}
-          if (!perfil && ADMIN_EMAILS.map(x => x.toLowerCase()).includes(email)) { perfil = { id, email, nome: email.split('@')[0], perfil: 'escritorio', local: '' }; fsdb.collection('usuarios').doc(id).set(perfil); }
-          if (!perfil) { setMsg('Seu acesso ainda não foi liberado. Peça ao escritório para cadastrar o seu e-mail (' + email + ').'); setEstado('bloqueado'); return; }
+          const LSP = 'ccg_perfil_' + id;
+          let perfil = null, servidorRespondeu = false;
+          // perfil: tenta o servidor; sem sinal usa a cópia do aparelho
+          try { const d = await Promise.race([fsdb.collection('usuarios').doc(id).get(), new Promise((_, rej) => setTimeout(() => rej(new Error('lento')), navigator.onLine ? 8000 : 1500))]); servidorRespondeu = !d.metadata.fromCache; if (d.exists) perfil = d.data(); } catch (e) {}
+          if (!perfil) { try { const d = await fsdb.collection('usuarios').doc(id).get({ source: 'cache' }); if (d.exists) perfil = d.data(); } catch (e) {} }
+          if (!perfil) { try { perfil = JSON.parse(localStorage.getItem(LSP) || 'null'); } catch (e) {} }
+          if (!perfil && ADMIN_EMAILS.map(x => x.toLowerCase()).includes(email)) { perfil = { id, email, nome: email.split('@')[0], perfil: 'escritorio', local: '' }; if (servidorRespondeu) fsdb.collection('usuarios').doc(id).set(perfil); }
+          if (!perfil) { setMsg(navigator.onLine ? 'Seu acesso ainda não foi liberado. Peça ao escritório para cadastrar o seu e-mail (' + email + ').' : 'Sem internet. Na primeira vez em cada celular é preciso entrar com internet; depois o app abre sem sinal.'); setEstado('bloqueado'); return; }
           if (!PERFIS[perfil.perfil]) perfil = Object.assign({}, perfil, { perfil: 'gestor' });
-          const cfgDoc = await fsdb.collection('config').doc('geral').get().catch(() => null);
-          if (cfgDoc && !cfgDoc.exists) fsdb.collection('config').doc('geral').set({ id: 'geral', locais: LOCAIS_PADRAO.slice(), fornecedores: FORNECEDORES_PADRAO.slice() });
+          try { localStorage.setItem(LSP, JSON.stringify(perfil)); } catch (e) {}
+          if (servidorRespondeu) fsdb.collection('config').doc('geral').get().then(c => { if (!c.exists && !c.metadata.fromCache) fsdb.collection('config').doc('geral').set({ id: 'geral', locais: LOCAIS_PADRAO.slice(), fornecedores: FORNECEDORES_PADRAO.slice() }); }).catch(() => {});
           setUsuario(perfil); setEstado('pronto');
         });
-      } catch (e) { setMsg(e.message); setEstado('erro'); }
+      } catch (e) { setMsg(navigator.onLine ? 'Não foi possível abrir o app: ' + e.message : 'Sem internet, e este celular ainda não tem o app guardado. Abra uma vez com internet; depois ele funciona sem sinal.'); setEstado('erro'); }
     })();
   }, []);
   if (estado === 'carregando') return html`<div style=${{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--dark)' }}><div className="spin" style=${{ borderColor: '#2F3B3A', borderTopColor: '#AEC155' }}></div></div>`;
-  if (estado === 'erro' || estado === 'bloqueado') return html`<div className="login"><div className="top"><span className="tile"><${Ic} n="box" s=${30} c="#13152B" /></span><h1>Controle de Peças</h1></div><div className="panel"><div className="note y">${msg}</div>${fb && html`<button className="btn soft block" onClick=${() => fb.auth.signOut().then(() => location.reload())}>Sair e entrar com outro e-mail</button>`}</div></div>`;
+  if (estado === 'erro' || estado === 'bloqueado') return html`<div className="login"><div className="top"><span className="tile"><${Ic} n="box" s=${30} c="#13152B" /></span><h1>Controle de Peças</h1></div><div className="panel"><div className="note y">${msg}</div><button className="btn block" onClick=${() => location.reload()}>Tentar de novo</button>${fb && html`<button className="btn soft block" onClick=${() => fb.auth.signOut().then(() => location.reload())}>Sair e entrar com outro e-mail</button>`}</div></div>`;
   if (!usuario) return html`<${Entrar} fb=${fb} aoEntrar=${(u) => { setUsuario(u); try { localStorage.setItem('ccg_pecas_usuario', JSON.stringify(u)); } catch (e) {} }} />`;
   const sair = () => { if (fb) fb.auth.signOut(); try { localStorage.removeItem('ccg_pecas_usuario'); sessionStorage.removeItem('ccg_aba'); } catch (e) {} setUsuario(null); };
   return html`<${Casca} key=${usuario.perfil + usuario.local + usuario.nome} usuario=${usuario} sair=${sair} trocarPerfil=${!fb ? sair : null} />`;
@@ -2197,12 +2236,13 @@ function dadosRelatorio(n) {
   const faltas = itens.filter(i => i.dif < 0), sobras = itens.filter(i => i.dif > 0);
   const faltaQ = faltas.reduce((t, i) => t - i.dif, 0), faltaV = faltas.reduce((t, i) => t - i.dif * i.vu, 0), sobraQ = sobras.reduce((t, i) => t + i.dif, 0);
   let viagens = (n.viagens || []).map(v => ({ n: v.n, em: v.em, por: v.por || '', q: Object.values(v.recebido || {}).reduce((a, b) => a + b, 0) }));
-  if (!viagens.length && concluida) viagens = [{ n: 1, em: n.concluidaEm || n.criadoEm, por: n.conferente || '', q: totR }];
+  if (!viagens.length && concluida) viagens = [{ n: 1, em: n.concluidaEm || n.criadoEm || agoraISO(), por: n.conferente || '', q: totR }];
   const situacao = !concluida ? ['RECEBIMENTO PARCIAL', 'parcial', 'Recebimento parcial'] : faltaQ ? ['CONFERIDA COM FALTA', 'falta', 'Conferida com falta'] : sobraQ ? ['CONFERIDA COM SOBRA', 'sobra', 'Conferida com sobra'] : ['CONFERIDA SEM DIFERENÇA', 'ok', 'Conferida sem diferença'];
   const datas = viagens.map(v => dataLocal(new Date(v.em))).sort();
   const periodo = !datas.length ? '—' : datas[0] === datas[datas.length - 1] ? fmtData(datas[0]) : fmtDataCurta(datas[0]) + ' a ' + fmtData(datas[datas.length - 1]);
   let h = 0; String(n.id).split('').forEach(c => { h = (h * 31 + c.charCodeAt(0)) >>> 0; });
-  return { n, concluida, itens, totQ, totR, faltas, sobras, faltaQ, faltaV, sobraQ, viagens, situacao, periodo,
+  const assinaturas = (n.assinaturas || []).filter(a => a.conf || a.mot);
+  return { n, assinaturas, concluida, itens, totQ, totR, faltas, sobras, faltaQ, faltaV, sobraQ, viagens, situacao, periodo,
     empresa: grupoEmpresa(n.fornecedor), conferente: (viagens[viagens.length - 1] || {}).por || n.conferente || '—',
     codigo: (n.numero || 'NF') + '-' + h.toString(16).slice(-4).toUpperCase(), gerado: fmtData(hoje()) + ' ' + fmtHora(agoraISO()) };
 }
@@ -2246,17 +2286,8 @@ function htmlImagem(d) {
   </div></div>`;
 }
 // ---------- PDF A4 (794 × 1123 px por página) ----------
-function paginasPDF(d) {
-  const rows = d.itens; const pags = []; let i = 0, primeira = true;
-  const extraViagens = Math.max(0, d.viagens.length - 2);
-  while (i < rows.length || !pags.length) {
-    const resta = rows.length - i;
-    const capUlt = (primeira ? 15 : 28) - (primeira ? extraViagens : 0), capMeio = (primeira ? 21 : 36) - (primeira ? extraViagens : 0);
-    if (resta <= capUlt) { pags.push({ ini: i, fim: rows.length, ultima: true }); i = rows.length; }
-    else { const q = Math.min(capMeio, resta - 1); pags.push({ ini: i, fim: i + q, ultima: false }); i += q; }
-    primeira = false;
-  }
-  const tot = pags.length; const k = d.situacao[1];
+function fabricaPaginaPDF(d) {
+  const k = d.situacao[1];
   const TH = (al) => `padding:7px 8px;font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#4E5752;font-weight:600;text-align:${al};border-bottom:1.5px solid #13152B`;
   const cab = (p) => `<div style="display:flex;align-items:center;gap:16px;padding-bottom:12px;border-bottom:3px solid #AEC155"><img src="${window.__LOGO__}" style="height:${p ? 34 : 46}px"><div style="flex:1;text-align:right"><div style="font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:600;letter-spacing:.16em;color:#5E7020">LINHA 4 · EXTENSÃO GÁVEA · CONTROLE DE PEÇAS</div><div style="font-size:${p ? 15 : 20}px;font-weight:700">${p ? 'NF ' + esc(d.n.numero) + ' · ' + esc(d.empresa) + ' · continuação' : 'Relatório de conferência de recebimento'}</div></div></div>`;
   const kpi = (v, l, c, ult) => `<div style="flex:1;padding:12px 14px;${ult ? '' : 'border-right:1px solid #D7DBD0'}"><div style="font-size:21px;font-weight:700;line-height:1.1;${c ? 'color:' + c : ''}">${v}</div><div style="font-size:10px;color:#4E5752;margin-top:2px">${l}</div></div>`;
@@ -2264,43 +2295,67 @@ function paginasPDF(d) {
   const linha = (it, ix) => { const f = it.dif < 0, s = it.dif > 0; const bg = f ? '#FBF3F7' : s ? '#F3F5FA' : ix % 2 ? '#FAFBF8' : '#FFFFFF';
     const sit = f ? `<span style="font-weight:600;color:${d.concluida ? '#7A1556' : '#5C4300'}">● ${d.concluida ? 'falta' : 'a receber'} ${-it.dif}</span>` : s ? `<span style="font-weight:600;color:#243B8F">● sobra ${it.dif}</span>` : '<span style="color:#3E7A5E;font-weight:600">ok</span>';
     const dv = f && d.concluida ? `<b style="color:#7A1556">−${brl(-it.dif * it.vu)}</b>` : '<span style="color:#8A9289">—</span>';
-    return `<tr style="background:${bg}"><td style="padding:6px 8px;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#4E5752">${esc(it.codigo)}</td><td style="padding:6px 8px">${esc(it.desc)}</td><td style="padding:6px 8px;text-align:right">${nfmt(it.qtd)}</td><td style="padding:6px 8px;text-align:right;font-weight:600">${nfmt(it.rec)}</td><td style="padding:6px 8px">${sit}</td><td style="padding:6px 8px;text-align:right;color:#4E5752">${brl(it.vu)}</td><td style="padding:6px 8px;text-align:right">${dv}</td></tr>`; };
+    return `<tr style="background:${bg}"><td style="padding:4.5px 8px;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#4E5752">${esc(it.codigo)}</td><td style="padding:4.5px 8px">${esc(it.desc)}</td><td style="padding:4.5px 8px;text-align:right">${nfmt(it.qtd)}</td><td style="padding:4.5px 8px;text-align:right;font-weight:600">${nfmt(it.rec)}</td><td style="padding:4.5px 8px">${sit}</td><td style="padding:4.5px 8px;text-align:right;color:#4E5752">${brl(it.vu)}</td><td style="padding:4.5px 8px;text-align:right">${dv}</td></tr>`; };
   const ocorr = [d.faltas.length && d.concluida ? `<b>Falta:</b> ${d.faltas.map(i => esc(i.desc) + ' (nota ' + i.qtd + ', recebidas ' + i.rec + ')').join('; ')}. Pendência aberta para contestação com a ${esc(d.empresa)} no valor de ${brl(d.faltaV)}.` : '',
     d.sobras.length ? `<b>Sobra:</b> ${d.sobras.map(i => esc(i.desc) + ' (+' + i.dif + ')').join('; ')} — peças fora da nota.` : '',
     !d.concluida ? `<b>Recebimento parcial:</b> ainda faltam chegar ${nfmt(d.totQ - d.totR)} peças desta nota. A conferência continua nas próximas viagens.` : ''].filter(Boolean);
-  return pags.map((pg, p) => `<div style="width:794px;height:1123px;box-sizing:border-box;background:#fff;font-family:'IBM Plex Sans',sans-serif;color:#13152B;padding:46px 52px 34px;display:flex;flex-direction:column;gap:16px;font-size:11px">
+  return (pg, p, tot) => `<div class="pg" style="width:794px;height:1123px;box-sizing:border-box;background:#fff;font-family:'IBM Plex Sans',sans-serif;color:#13152B;padding:42px 50px 30px;display:flex;flex-direction:column;gap:13px;font-size:11px">
     ${cab(p)}
     ${p === 0 ? `<div style="display:flex;gap:16px;align-items:center"><div style="flex:1;display:flex;gap:14px;align-items:center">${logoEmpresaHtml(d, 56)}<div><div style="font-size:24px;font-weight:700;line-height:1.1">NF ${esc(d.n.numero)} · ${esc(d.empresa)}</div><div style="font-size:11px;color:#4E5752;margin-top:3px">${esc(d.n.fornecedor || '')}${d.n.contrato ? ' · contrato ' + esc(d.n.contrato) : ''}</div></div></div>
       <div style="text-align:right"><div style="display:inline-block;font-size:11px;font-weight:700;letter-spacing:.06em;padding:6px 12px;border-radius:6px;border:1.5px solid ${COR_SIT[k]};color:${TXT_SIT[k]}">${d.situacao[0]}</div>${d.n.emissao ? `<div style="font-size:10px;color:#4E5752;margin-top:6px">Emitida em ${esc(d.n.emissao)}</div>` : ''}</div></div>
       <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid #D7DBD0;border-radius:10px;overflow:hidden">${info('Local da aplicação', esc(d.n.local || '—'))}${info('Conferência', esc(d.periodo))}${info('Conferente', esc(d.conferente))}${info('Valor da nota', d.n.totalNota ? brl(d.n.totalNota) : '—', true)}</div>
       <div style="display:flex;border:1px solid #D7DBD0;border-radius:10px;overflow:hidden">${kpi(nfmt(d.totQ), 'peças na nota')}${kpi(nfmt(d.totR), d.concluida ? 'peças recebidas' : 'recebidas até agora')}${d.concluida ? kpi(nfmt(d.faltaQ), 'peças em falta', d.faltaQ ? '#7A1556' : '') + kpi(nfmt(d.sobraQ), 'peças a mais', d.sobraQ ? '#243B8F' : '') + kpi(d.faltaV ? brlC(d.faltaV) : 'R$ 0', 'valor em falta', d.faltaV ? '#7A1556' : '', true) : kpi(nfmt(d.totQ - d.totR), 'ainda por vir', '#5C4300') + kpi(d.viagens.length, d.viagens.length === 1 ? 'viagem' : 'viagens', '', true)}</div>
-      ${d.viagens.length ? `<div><div style="font-size:12px;font-weight:700;margin-bottom:6px">Viagens</div><table style="width:100%;border-collapse:collapse;font-size:10.5px"><tr><th style="${TH('left')}">Viagem</th><th style="${TH('left')}">Data e hora</th><th style="${TH('left')}">Conferente</th><th style="${TH('right')}">Peças recebidas</th></tr>${d.viagens.map((v, ix) => `<tr style="background:${ix % 2 ? '#FAFBF8' : '#fff'}"><td style="padding:6px 8px">${v.n}</td><td style="padding:6px 8px">${fmtData(dataLocal(new Date(v.em)))} · ${fmtHora(v.em)}</td><td style="padding:6px 8px">${esc(v.por)}</td><td style="padding:6px 8px;text-align:right;font-weight:600">${nfmt(v.q)}</td></tr>`).join('')}</table></div>` : ''}` : ''}
-    <div><div style="font-size:12px;font-weight:700;margin-bottom:6px">Itens da nota${tot > 1 ? ` <span style="font-weight:400;color:#4E5752">· ${pg.ini + 1} a ${pg.fim} de ${d.itens.length}</span>` : ''}</div>
+      ${d.viagens.length ? `<div><div style="font-size:12px;font-weight:700;margin-bottom:6px">Viagens</div><table style="width:100%;border-collapse:collapse;font-size:10.5px"><tr><th style="${TH('left')}">Viagem</th><th style="${TH('left')}">Data e hora</th><th style="${TH('left')}">Conferente</th><th style="${TH('right')}">Peças recebidas</th></tr>${d.viagens.map((v, ix) => `<tr style="background:${ix % 2 ? '#FAFBF8' : '#fff'}"><td style="padding:4.5px 8px">${v.n}</td><td style="padding:4.5px 8px">${fmtData(dataLocal(new Date(v.em)))} · ${fmtHora(v.em)}</td><td style="padding:4.5px 8px">${esc(v.por)}</td><td style="padding:4.5px 8px;text-align:right;font-weight:600">${nfmt(v.q)}</td></tr>`).join('')}</table></div>` : ''}` : ''}
+    ${pg.fim > pg.ini ? `<div><div style="font-size:12px;font-weight:700;margin-bottom:6px">Itens da nota${tot > 1 ? ` <span style="font-weight:400;color:#4E5752">· ${pg.ini + 1} a ${pg.fim} de ${d.itens.length}</span>` : ''}</div>
       <table style="width:100%;border-collapse:collapse;font-size:10.5px"><tr><th style="${TH('left')}">Código</th><th style="${TH('left')}">Descrição</th><th style="${TH('right')}">Nota</th><th style="${TH('right')}">Recebido</th><th style="${TH('left')}">Situação</th><th style="${TH('right')}">Valor unit.</th><th style="${TH('right')}">Diferença</th></tr>
       ${d.itens.slice(pg.ini, pg.fim).map((it, ix) => linha(it, pg.ini + ix)).join('')}
-      ${pg.ultima ? `<tr><td colspan="2" style="padding:8px;font-weight:700;border-top:1.5px solid #13152B">Total · ${d.itens.length} itens</td><td style="padding:8px;text-align:right;font-weight:700;border-top:1.5px solid #13152B">${nfmt(d.totQ)}</td><td style="padding:8px;text-align:right;font-weight:700;border-top:1.5px solid #13152B">${nfmt(d.totR)}</td><td style="border-top:1.5px solid #13152B"></td><td style="border-top:1.5px solid #13152B"></td><td style="padding:8px;text-align:right;font-weight:700;border-top:1.5px solid #13152B;${d.faltaV && d.concluida ? 'color:#7A1556' : ''}">${d.faltaV && d.concluida ? '−' + brl(d.faltaV) : '—'}</td></tr>` : ''}</table></div>
+      ${pg.fim === d.itens.length ? `<tr><td colspan="2" style="padding:8px;font-weight:700;border-top:1.5px solid #13152B">Total · ${d.itens.length} itens</td><td style="padding:8px;text-align:right;font-weight:700;border-top:1.5px solid #13152B">${nfmt(d.totQ)}</td><td style="padding:8px;text-align:right;font-weight:700;border-top:1.5px solid #13152B">${nfmt(d.totR)}</td><td style="border-top:1.5px solid #13152B"></td><td style="border-top:1.5px solid #13152B"></td><td style="padding:8px;text-align:right;font-weight:700;border-top:1.5px solid #13152B;${d.faltaV && d.concluida ? 'color:#7A1556' : ''}">${d.faltaV && d.concluida ? '−' + brl(d.faltaV) : '—'}</td></tr>` : ''}</table></div>` : ''}
     ${pg.ultima && ocorr.length ? `<div style="padding:10px 12px;border-radius:8px;background:#F7F8F4;border-left:3px solid ${COR_SIT[k]};font-size:10.5px;line-height:1.5">${ocorr.join('<br>')}</div>` : ''}
     <div style="flex:1"></div>
-    ${pg.ultima ? `<div style="display:flex;gap:40px;padding:0 10px"><div style="flex:1;text-align:center"><div style="border-top:1px solid #13152B;margin-bottom:4px"></div><div style="font-size:10px;font-weight:600">${esc(d.conferente)}</div><div style="font-size:9px;color:#4E5752">Conferente · CCG</div></div><div style="flex:1;text-align:center"><div style="border-top:1px solid #13152B;margin-bottom:4px"></div><div style="font-size:10px;font-weight:600">&nbsp;</div><div style="font-size:9px;color:#4E5752">Motorista / representante ${esc(d.empresa)}</div></div></div>` : ''}
+    ${pg.ultima && d.assinaturas.length ? `<div>${d.assinaturas.slice(-3).map(a => `<div style="display:flex;gap:28px;align-items:flex-end;margin-bottom:6px">
+      ${[[a.conf, a.confNome || '', 'Conferente · CCG'], [a.mot, a.motNome || '', 'Motorista / representante ' + esc(d.empresa)]].map(([img, nm, papel]) => `<div style="flex:1;text-align:center"><div style="height:46px;display:flex;align-items:flex-end;justify-content:center">${img ? `<img src="${img}" style="max-height:46px;max-width:100%">` : '<span style="font-size:9px;color:#B9BFB2">sem assinatura</span>'}</div><div style="border-top:1px solid #13152B;margin:2px 0 4px"></div><div style="font-size:10px;font-weight:600">${esc(nm) || '&nbsp;'}</div><div style="font-size:9px;color:#4E5752">${papel}</div></div>`).join('')}
+      <div style="width:120px;font-size:9px;color:#4E5752;text-align:right;padding-bottom:16px">${a.encerramento ? 'Encerramento' : a.viagem ? 'Viagem ' + a.viagem : ''}<br>${fmtData(dataLocal(new Date(a.em)))} · ${fmtHora(a.em)}</div></div>`).join('')}</div>` : ''}
     <div style="display:flex;justify-content:space-between;padding-top:10px;border-top:1px solid #D7DBD0;font-size:9px;color:#8A9289"><span>Gerado pelo app Controle de Peças · CCG · ${esc(d.gerado)}</span><span style="font-family:'IBM Plex Mono',monospace">CÓD. ${esc(d.codigo)} · página ${p + 1} de ${tot}</span></div>
-  </div>`);
+  </div>`;
 }
+// Monta as páginas medindo de verdade quanto cabe em cada folha A4
+async function paginasPDF(d) {
+  const pagina = fabricaPaginaPDF(d); const n = d.itens.length;
+  const box = document.createElement('div'); box.style.cssText = 'position:fixed;left:-20000px;top:0;width:794px;z-index:-1';
+  document.body.appendChild(box);
+  const cabe = (pg, p) => { box.innerHTML = '<style>.pg>*{flex-shrink:0}</style>' + pagina(pg, p, 9); const el = box.querySelector('.pg'); return el.scrollHeight <= 1124; };
+  const pags = []; let ini = 0;
+  try {
+    while (true) {
+      const p = pags.length;
+      if (cabe({ ini, fim: n, ultima: true }, p)) { pags.push({ ini, fim: n, ultima: true }); break; }
+      // a tabela inteira cabe, só a ocorrência/assinaturas não: elas vão para a página seguinte
+      if (cabe({ ini, fim: n, ultima: false }, p)) { pags.push({ ini, fim: n, ultima: false }, { ini: n, fim: n, ultima: true }); break; }
+      let fim = n - 1; while (fim > ini + 1 && !cabe({ ini, fim, ultima: false }, p)) fim--;
+      if (fim <= ini) fim = ini + 1;
+      pags.push({ ini, fim, ultima: false }); ini = fim;
+      if (pags.length > 40) break;
+    }
+  } finally { box.remove(); }
+  return pags.map((pg, p) => pagina(pg, p, pags.length));
+}
+
 async function fotografar(htmlStr, largura) {
   await loadScript(LIB_H2C);
   const box = document.createElement('div');
   box.style.cssText = 'position:fixed;left:-20000px;top:0;width:' + largura + 'px;z-index:-1';
-  box.innerHTML = htmlStr; document.body.appendChild(box);
+  box.innerHTML = '<style>.pg>*{flex-shrink:0}</style>' + htmlStr; document.body.appendChild(box);
   try {
     await Promise.all([...box.querySelectorAll('img')].map(im => im.complete ? 0 : new Promise(r => { im.onload = im.onerror = r; })));
     if (document.fonts && document.fonts.ready) await document.fonts.ready;
-    return await window.html2canvas(box.firstElementChild, { scale: 2, backgroundColor: '#ffffff', logging: false, useCORS: true });
+    return await window.html2canvas(box.querySelector('style') ? box.children[1] : box.firstElementChild, { scale: 2, backgroundColor: '#ffffff', logging: false, useCORS: true });
   } finally { box.remove(); }
 }
 async function gerarImagemRelatorio(d) { const c = await fotografar(htmlImagem(d), 540); return await new Promise(r => c.toBlob(r, 'image/png')); }
 async function gerarPDFRelatorio(d, aoProgresso) {
   await loadScript(LIB_JSPDF);
   const pdf = new window.jspdf.jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
-  const pags = paginasPDF(d);
+  const pags = await paginasPDF(d);
   for (let i = 0; i < pags.length; i++) {
     aoProgresso && aoProgresso('Montando página ' + (i + 1) + ' de ' + pags.length + '…');
     const c = await fotografar(pags[i], 794);
