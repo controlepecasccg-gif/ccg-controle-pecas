@@ -217,6 +217,12 @@ table.tb td input{width:100%;height:42px;border:1px solid var(--line);border-rad
 .leitor .lt-msg{position:absolute;left:16px;right:16px;bottom:calc(96px + env(safe-area-inset-bottom));text-align:center;color:#fff;font-weight:600;font-size:15px;background:rgba(0,0,0,.55);border-radius:14px;padding:12px}
 .leitor .lt-msg.erro{background:rgba(122,21,86,.85)}
 .leitor .lt-dig{position:absolute;left:16px;right:16px;bottom:calc(24px + env(safe-area-inset-bottom))}
+.reqs{list-style:none;padding:0;margin:0}
+.reqs li{font-size:13px;color:var(--muted);padding:4px 0 4px 24px;position:relative}
+.reqs li::before{content:'○';position:absolute;left:0;top:4px;font-size:13px;color:#B9BFB2}
+.reqs li.ok{color:var(--green-t);font-weight:600}
+.reqs li.ok::before{content:'✓';color:var(--green-t);font-weight:800}
+.login h2{margin:0;font-size:20px;font-weight:700;color:var(--navy)}
 </style>
 </head>
 <body>
@@ -1100,7 +1106,7 @@ function Entrar({ aoEntrar, fb }) {
       catch (e) { setErro(/network/i.test(e.code || '') || !navigator.onLine ? 'Sem conexão. Para entrar é preciso internet (só na primeira vez neste celular).' : /api-key/i.test(e.code || '') ? 'Problema na configuração do app. Avise o escritório.' : /too-many/i.test(e.code || '') ? 'Muitas tentativas. Espere alguns minutos.' : 'E-mail ou senha incorretos.'); }
       setCarregando(false);
     };
-    const esqueci = async () => { if (!email.trim()) return setErro('Digite seu e-mail acima para receber o link.'); try { await fb.auth.sendPasswordResetEmail(email.trim()); setErro('Enviamos um link para ' + email.trim() + ' criar uma nova senha.'); } catch (e) { setErro('Não foi possível enviar o e-mail. Confira o endereço.'); } };
+    const esqueci = async () => { if (!email.trim()) return setErro('Digite seu e-mail acima para receber o link.'); if (perfilDoEmail(email.trim())) return setErro('Esse e-mail não recebe mensagens. Peça ao escritório para liberar uma senha nova.'); try { await fb.auth.sendPasswordResetEmail(email.trim()); setErro('Enviamos um link para ' + email.trim() + ' criar uma nova senha.'); } catch (e) { setErro('Não foi possível enviar o e-mail. Confira o endereço.'); } };
     return html`<div className="login">${topo}
       <form className="panel" onSubmit=${(e) => { e.preventDefault(); entrar(); }}>
         <label className="f"><span className="lb">E-mail</span><input className="inp" type="email" inputmode="email" autocomplete="username" value=${email} onChange=${(e) => setEmail(e.target.value)} /></label>
@@ -1148,14 +1154,6 @@ function InstalarSheet({ aoFechar }) {
 }
 
 /* ================= MENU DO PERFIL ================= */
-async function trocarSenha() {
-  const u = window.firebase && firebase.auth().currentUser; if (!u) return;
-  const atual = prompt('Senha atual:'); if (!atual) return;
-  const nova = prompt('Nova senha (mínimo 6 caracteres):'); if (!nova) return;
-  if (nova.length < 6) return toast('A senha precisa ter pelo menos 6 caracteres.');
-  try { await u.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(u.email, atual)); await u.updatePassword(nova); toast('Senha trocada.'); }
-  catch (e) { toast(/wrong-password|invalid-credential|INVALID_LOGIN/i.test(e.code || e.message || '') ? 'Senha atual errada.' : 'Não consegui trocar a senha. Precisa de internet.'); }
-}
 function MenuPerfil({ ctx, aoFechar, sair, trocarPerfil, instalar }) {
   const { usuario: u, ir } = ctx; const inst = useInstalavel();
   const item = (ic, t, f) => html`<button className="menuitem" onClick=${() => { aoFechar(); f(); }}><${Ic} n=${ic} />${t}</button>`;
@@ -1166,7 +1164,6 @@ function MenuPerfil({ ctx, aoFechar, sair, trocarPerfil, instalar }) {
       ${item('map', 'Projetos', () => ir('cd', 'projetos'))}
       ${pode(u, 'config') && item('gear', 'Configurações e usuários', () => ir('gestao', 'config'))}
       ${inst.pode && item('phone', 'Instalar o app', instalar)}
-      ${store.modo !== 'demo' && item('user', 'Trocar minha senha', trocarSenha)}
       ${trocarPerfil && item('user', 'Trocar perfil (demo)', trocarPerfil)}
       ${item('exit', 'Sair', sair)}
     </div>
@@ -2726,6 +2723,50 @@ function TelaConfig({ ctx }) {
 }
 
 /* ================= APLICATIVO ================= */
+/* ---- primeiro acesso (igual ao app de Segurança do Trabalho): nova senha e depois nome e matrícula ---- */
+function CampoSenha({ rotulo, valor, set, auto }) {
+  const [ver, setVer] = useState(false);
+  return html`<label className="f" style=${{ position: 'relative' }}><span className="lb">${rotulo}</span><input className="inp" type=${ver ? 'text' : 'password'} autocomplete=${auto || 'new-password'} style=${{ paddingRight: 92 }} value=${valor} onChange=${(e) => set(e.target.value)} />
+    <button type="button" onClick=${() => setVer(!ver)} style=${{ position: 'absolute', right: 8, bottom: 6, height: 40, border: 'none', background: 'none', fontSize: 14, fontWeight: 600, color: 'var(--muted)' }}>${ver ? 'Esconder' : 'Mostrar'}</button></label>`;
+}
+function PrimeiroAcesso({ fb, perfil, aoConcluir, sair }) {
+  const [passo, setPasso] = useState(perfil.senhaRedefinida ? 'dados' : 'senha');
+  const [s1, setS1] = useState(''); const [s2, setS2] = useState(''); const [nome, setNome] = useState(perfil.nomeCompleto || perfil.nome || ''); const [mat, setMat] = useState(perfil.matricula || '');
+  const [msg, setMsg] = useState(''); const [ocup, setOcup] = useState(false);
+  const req = { tamanho: s1.length >= 8, minuscula: /[a-z]/.test(s1), maiuscula: /[A-Z]/.test(s1), especial: /[^A-Za-z0-9]/.test(s1), iguais: s1.length > 0 && s1 === s2 };
+  const ref = fb.fsdb.collection('usuarios').doc(perfil.id);
+  const criarSenha = async () => {
+    setMsg(''); if (!Object.values(req).every(Boolean)) return setMsg('Complete todos os requisitos da senha listados acima.');
+    setOcup(true);
+    try { await fb.auth.currentUser.updatePassword(s1); await ref.set({ senhaRedefinida: true }, { merge: true }); setPasso('dados'); }
+    catch (e) { setMsg(e && e.code === 'auth/requires-recent-login' ? 'Por segurança, saia e entre de novo com a senha temporária para trocar a senha.' : !navigator.onLine ? 'Sem internet. Para criar a senha é preciso sinal.' : 'Não foi possível salvar a nova senha. Tente novamente.'); }
+    finally { setOcup(false); }
+  };
+  const salvarDados = () => {
+    setMsg(''); const n = nome.trim().replace(/\s+/g, ' ');
+    if (n.split(' ').length < 2) return setMsg('Escreva o nome completo (nome e sobrenome).');
+    if (!mat.trim()) return setMsg('Informe a sua matrícula.');
+    const novo = Object.assign({}, perfil, { nome: n, nomeCompleto: n, matricula: mat.trim(), senhaRedefinida: true, perfilCompleto: true });
+    ref.set({ nome: n, nomeCompleto: n, matricula: mat.trim(), senhaRedefinida: true, perfilCompleto: true }, { merge: true }).catch(() => {});
+    try { fb.auth.currentUser.updateProfile({ displayName: n }).catch(() => {}); } catch (e) {}
+    aoConcluir(novo);
+  };
+  const topo = html`<div className="top"><span className="tile"><${Ic} n="box" s=${30} c="#13152B" /></span><h1>Controle de Peças</h1></div>`;
+  if (passo === 'senha') return html`<div className="login">${topo}<form className="panel" onSubmit=${(e) => { e.preventDefault(); criarSenha(); }}>
+    <div><h2>Crie sua nova senha</h2><div className="t2" style=${{ marginTop: 4 }}>Por segurança, defina uma senha só sua antes de continuar.</div></div>
+    <${CampoSenha} rotulo="Nova senha" valor=${s1} set=${setS1} />
+    <${CampoSenha} rotulo="Confirmar nova senha" valor=${s2} set=${setS2} />
+    <ul className="reqs">${[['tamanho', 'Mínimo de 8 caracteres'], ['minuscula', 'Pelo menos 1 letra minúscula'], ['maiuscula', 'Pelo menos 1 letra maiúscula'], ['especial', 'Pelo menos 1 caractere especial'], ['iguais', 'As duas senhas são iguais']].map(([k, t]) => html`<li key=${k} className=${req[k] ? 'ok' : ''}>${t}</li>`)}</ul>
+    ${msg && html`<div className="note y">${msg}</div>`}
+    <button type="submit" className="btn block" disabled=${ocup}>${ocup ? 'Salvando…' : 'Criar senha'}</button>
+    <button type="button" className="link" style=${{ alignSelf: 'center' }} onClick=${sair}>Sair</button></form></div>`;
+  return html`<div className="login">${topo}<form className="panel" onSubmit=${(e) => { e.preventDefault(); salvarDados(); }}>
+    <div><h2>Seus dados</h2><div className="t2" style=${{ marginTop: 4 }}>Eles aparecem nos pedidos e nos termos que você registrar.</div></div>
+    <label className="f"><span className="lb">Nome completo</span><input className="inp" value=${nome} onChange=${(e) => setNome(e.target.value)} autocomplete="name" placeholder="Ex.: Byanca Brasil Pereira dos Santos" /></label>
+    <label className="f"><span className="lb">Matrícula</span><input className="inp" value=${mat} onChange=${(e) => setMat(e.target.value)} inputmode="numeric" placeholder="Ex.: 262" /></label>
+    ${msg && html`<div className="note y">${msg}</div>`}
+    <button type="submit" className="btn block">Continuar</button></form></div>`;
+}
 function App() {
   const [fb, setFb] = useState(null); const [usuario, setUsuario] = useState(null); const [estado, setEstado] = useState('carregando'); const [msg, setMsg] = useState('');
   useEffect(() => {
@@ -2762,13 +2803,14 @@ function App() {
           if (!PERFIS[perfil.perfil]) perfil = Object.assign({}, perfil, { perfil: 'gestor' });
           try { localStorage.setItem(LSP, JSON.stringify(perfil)); } catch (e) {}
           if (servidorRespondeu) fsdb.collection('config').doc('geral').get().then(c => { if (!c.exists && !c.metadata.fromCache) fsdb.collection('config').doc('geral').set({ id: 'geral', locais: [], fornecedores: FORNECEDORES_PADRAO.slice() }); }).catch(() => {});
-          setUsuario(perfil); setEstado('pronto');
+          setUsuario(perfil); setEstado(pdom && !(perfil.senhaRedefinida && perfil.perfilCompleto) ? 'primeiro' : 'pronto');
         });
       } catch (e) { setMsg(navigator.onLine ? 'Não foi possível abrir o app: ' + e.message : 'Sem internet, e este celular ainda não tem o app guardado. Abra uma vez com internet; depois ele funciona sem sinal.'); setEstado('erro'); }
     })();
   }, []);
   if (estado === 'carregando') return html`<div style=${{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--dark)' }}><div className="spin" style=${{ borderColor: '#2F3B3A', borderTopColor: '#AEC155' }}></div></div>`;
   if (estado === 'erro' || estado === 'bloqueado') return html`<div className="login"><div className="top"><span className="tile"><${Ic} n="box" s=${30} c="#13152B" /></span><h1>Controle de Peças</h1></div><div className="panel"><div className="note y">${msg}</div><button className="btn block" onClick=${() => location.reload()}>Tentar de novo</button>${fb && html`<button className="btn soft block" onClick=${() => fb.auth.signOut().then(() => location.reload())}>Sair e entrar com outro e-mail</button>`}</div></div>`;
+  if (estado === 'primeiro' && usuario && fb) return html`<${PrimeiroAcesso} fb=${fb} perfil=${usuario} sair=${() => { fb.auth.signOut(); setUsuario(null); setEstado('pronto'); }} aoConcluir=${(p) => { try { localStorage.setItem('ccg_perfil_' + p.id, JSON.stringify(p)); } catch (e) {} setUsuario(p); setEstado('pronto'); }} />`;
   if (!usuario) return html`<${Entrar} fb=${fb} aoEntrar=${(u) => { setUsuario(u); try { localStorage.setItem('ccg_pecas_usuario', JSON.stringify(u)); } catch (e) {} }} />`;
   const sair = () => { if (fb) fb.auth.signOut(); try { localStorage.removeItem('ccg_pecas_usuario'); sessionStorage.removeItem('ccg_aba'); } catch (e) {} setUsuario(null); };
   return html`<${Casca} key=${usuario.perfil + usuario.local + usuario.nome} usuario=${usuario} sair=${sair} trocarPerfil=${!fb ? sair : null} />`;

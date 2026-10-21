@@ -15,4 +15,4 @@ Faça uma vez, logada como **controlepecasccg@gmail.com**:
 "Qualquer pessoa" só deixa o endereço ser chamado: o script confere o login do app em cada pedido e recusa quem não está logado.
 Se mudar o código depois, use **Implantar › Gerenciar implantações › editar › Nova versão** para manter o mesmo URL.
 
-A senha do primeiro acesso é **Gavea + matrícula** (ex.: matrícula 262 → `Gavea262`). Cada pessoa pode trocar em **menu do perfil › Trocar minha senha**. Quem for apagado da planilha perde o acesso na próxima sincronização.
+A senha do primeiro acesso é **Gavea + matrícula** (ex.: matrícula 262 → `Gavea262`). No primeiro acesso o app pede para a pessoa criar uma senha só dela (mín. 8 caracteres, maiúscula, minúscula e caractere especial) e confirmar nome e matrícula, igual ao app de Segurança do Trabalho. Quem for apagado da planilha perde o acesso na próxima sincronização.
