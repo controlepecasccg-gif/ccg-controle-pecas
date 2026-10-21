@@ -303,6 +303,9 @@ const FIREBASE_CONFIG = {
 */
 // E-mails com perfil Escritório (administrador). Eles liberam os demais usuários.
 const ADMIN_EMAILS = ['controlepecasccg@gmail.com'];
+// App da web do Apps Script da planilha de cadastro (cria acessos e guarda os termos no Drive)
+const DRIVE_URL_PADRAO = 'https://script.google.com/macros/s/AKfycbyZeq0FGOPlfwyfW_ow7KZF9TcJLOVnjfjTKZzkWnXWJv_xHdJ5kPkHJaG0ed-gVtQmEQ/exec';
+function urlScript() { return (config().driveURL || DRIVE_URL_PADRAO || '').trim(); }
 const HORA_LIMITE_PEDIDO = 16; // pedidos para o dia seguinte até 16h
 const DIAS_PARADA_ALERTA = 7;  // peça aguardando há mais de X dias = alerta
 const APP_VERSAO = '2.1.0';
@@ -2559,9 +2562,9 @@ function nomeArquivoTermo(r, via) {
 /* ---------- integração com o Google Drive (Apps Script da planilha de cadastro) ----------
    config().driveURL = endereço do app da web do Apps Script. O app manda o PDF; o script guarda em
    Termos › Empresa › Local › NF. A cada devolução o termo é refeito e substitui o anterior. */
-function driveConfigurado() { return store.modo !== 'demo' && !!(config().driveURL || '').trim(); }
+function driveConfigurado() { return store.modo !== 'demo' && !!urlScript(); }
 async function chamarScript(dados) {
-  const url = (config().driveURL || '').trim(); if (!url) throw new Error('integração não configurada');
+  const url = urlScript(); if (!url) throw new Error('integração não configurada');
   const u = window.firebase && firebase.auth().currentUser; if (!u) throw new Error('sem login');
   const idToken = await u.getIdToken();
   const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ idToken }, dados)) });
@@ -2746,7 +2749,7 @@ async function sincronizarUsuarios(aoProgresso) {
   return { criados, atualizados, desativados, erros, total: volta.length };
 }
 function IntegracaoDrive() {
-  const cfg = config(); const [url, setUrl] = useState(cfg.driveURL || ''); const [ocup, setOcup] = useState(''); const [res, setRes] = useState('');
+  const cfg = config(); const [url, setUrl] = useState(cfg.driveURL || DRIVE_URL_PADRAO); const [ocup, setOcup] = useState(''); const [res, setRes] = useState('');
   if (store.modo === 'demo') return html`<div className="card pad"><b>Planilha de cadastro e Drive</b><div className="hint" style=${{ padding: 0 }}>Disponível só na versão com Firebase.</div></div>`;
   const salvar = () => { store.gravar('config', Object.assign({}, config(), { driveURL: url.trim() })); toast('Endereço salvo.'); };
   const testar = async () => { setOcup('Testando…'); setRes(''); try { salvar(); const j = await chamarScript({ acao: 'ping' }); setRes('Conectado à planilha "' + (j.planilha || '') + '".'); } catch (e) { setRes('Não conectou: ' + (e.message || e)); } finally { setOcup(''); } };
