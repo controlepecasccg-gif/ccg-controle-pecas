@@ -7,13 +7,13 @@
  * Faz duas coisas para o app (https://ccg-controle-pecas.web.app):
  *  1) entrega as linhas da planilha para o app criar os acessos e devolve a "Situação no app";
  *  2) recebe os termos de retirada (PDF) e guarda no Drive em:
- *     CCG · Controle de Peças › Termos › Empresa › Local › NF 0000
+ *     Termos › Empresa › Local › NF 0000
  *
  * Só aceita pedidos de quem está logado no app (o app manda o token do Firebase e o script confere).
  * Como instalar: veja apps-script/LEIA-ME.md
  */
 const API_KEY = 'AIzaSyBUEkbbQ0ToFqbVSMOH7Q0jD1IQxl_gS6Q';           // chave pública do app (a mesma do site)
-const PASTA_RAIZ_ID = '19WQ9woYV5OlE3elpW4pKEkUe2HeljceY';           // pasta "CCG · Controle de Peças"
+const PASTA_TERMOS_ID = '1qSdA0tOnD_FVCxxOUpqKwVmArAmPwNJ1';         // pasta "Termos" (criada pela Byanca)
 const ADMINS = ['controlepecasccg@gmail.com'];                        // podem ler a planilha pelo app
 const ABA = 'Usuários';
 
@@ -96,7 +96,7 @@ function pasta_(mae, nome) {
 function salvarTermo_(d) {
   const lock = LockService.getScriptLock(); lock.waitLock(30000);
   try {
-    const termos = pasta_(DriveApp.getFolderById(PASTA_RAIZ_ID), 'Termos'); const out = [];
+    const termos = DriveApp.getFolderById(PASTA_TERMOS_ID); const out = [];
     (d.pastas || []).forEach(p => {
       const nf = pasta_(pasta_(pasta_(termos, p.empresa), p.local), p.nf);
       (d.arquivos || []).forEach(a => {
