@@ -223,6 +223,55 @@ table.tb td input{width:100%;height:42px;border:1px solid var(--line);border-rad
 .reqs li.ok{color:var(--green-t);font-weight:600}
 .reqs li.ok::before{content:'✓';color:var(--green-t);font-weight:800}
 .login h2{margin:0;font-size:20px;font-weight:700;color:var(--navy)}
+
+/* ===== computador (tela larga): menu lateral e conteúdo largo ===== */
+.side{display:none}
+.dcols,.dcol,.dgrid{display:contents}
+.kanban{display:none}
+@media (min-width:1024px){
+  :root{--nav-h:0px}
+  .app{max-width:none;margin:0;padding-left:248px;box-shadow:none}
+  .bottomnav{display:none}
+  .side{display:flex;flex-direction:column;gap:6px;position:fixed;left:0;top:0;bottom:0;width:248px;background:var(--dark);padding:22px 16px;z-index:40;box-sizing:border-box}
+  .side .marca{display:flex;align-items:center;gap:10px;padding:0 6px 22px}
+  .side .marca .lg{width:40px;height:40px;border-radius:10px;background:#fff;display:flex;align-items:center;justify-content:center;flex:none;overflow:hidden}
+  .side .marca .lg img{width:34px;height:auto}
+  .side .marca b{color:#fff;font-size:15px;display:block}
+  .side .marca .eyebrow{font-size:10px}
+  .side .nv{display:flex;align-items:center;gap:12px;height:46px;padding:0 14px;border-radius:12px;border:none;background:none;font-size:14px;font-weight:600;color:#B9C2BD;position:relative;text-align:left;font-family:inherit;cursor:pointer}
+  .side .nv:hover{background:#26302F;color:#fff}
+  .side .nv.on{background:#2F3B3A;color:#fff}
+  .side .nv.on::before{content:'';position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:3px;background:var(--green)}
+  .side .nv .t{flex:1}
+  .side .nv .bd{min-width:20px;height:20px;border-radius:999px;background:#A3236B;color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center;padding:0 5px}
+  .side .eu{margin-top:auto;display:flex;align-items:center;gap:10px;padding:12px 8px 0;border-top:1px solid #2F3B3A;border-left:none;border-right:none;border-bottom:none;background:none;text-align:left;font-family:inherit;cursor:pointer}
+  .side .eu .av{width:36px;height:36px;border-radius:999px;background:#2F3B3A;color:#fff;font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:center;flex:none}
+  .side .eu span{font-size:13px;color:#fff;line-height:1.3;min-width:0}
+  .side .eu small{color:#B9C2BD;font-size:12px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hdr{background:#F7F8F4;color:var(--navy);border-bottom:1px solid var(--line);padding:20px 36px 18px}
+  .hdr.sub{padding:14px 36px 14px 24px}
+  .hdr h1{color:var(--navy)}
+  .hdr .eyebrow{color:#6F7A2E}
+  .hdr .back{color:var(--navy)}
+  .hdr .avatar{display:none}
+  .main{width:100%;max-width:1240px;margin:0 auto;box-sizing:border-box;padding:24px 36px 48px}
+  .main:has(.rodape){padding-bottom:120px}
+  .hdr.sub+.main{max-width:860px}
+  .rodape{left:248px;bottom:0}
+  .rodape .in{max-width:860px;border:1px solid var(--line);border-bottom:none;border-radius:18px 18px 0 0}
+  .toast{left:calc(50% + 124px);bottom:28px}
+  .dcols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;align-items:start}
+  .dcols.l{grid-template-columns:minmax(340px,.8fr) minmax(0,1.2fr)}
+  .dcol{display:flex;flex-direction:column;gap:12px;min-width:0}
+  .dgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(400px,1fr));gap:14px;align-items:start}
+  .seg.desk-off{display:none}
+  .kanban{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;align-items:start}
+  .kanban .kcol{background:#E9ECE3;border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:10px;min-width:0}
+  .kanban .kh{display:flex;align-items:center;gap:8px;padding:2px 4px 4px;font-size:14px;font-weight:700}
+  .kanban .kh .n{margin-left:auto;font-size:12px;background:#fff;border-radius:999px;padding:2px 9px}
+  .kanban .card.pad{padding:14px;gap:8px}
+  .so-cel{display:none}
+}
 </style>
 </head>
 <body>
@@ -1193,6 +1242,11 @@ const TELAS_ABA = () => ({
   pedidos: { '': TelaPedidos, novo: NovoPedido, separar: SepararPedido, retirada: TelaRetirada, devolucao: TelaDevolucao, termo: TelaTermo, receber: TelaReceberRemessa },
   gestao: { '': TelaGestao, catalogo: TelaCatalogo, config: TelaConfig, pendencias: TelaPendencias }
 });
+function useDesk() {
+  const q = '(min-width:1024px)'; const [d, setD] = useState(() => window.matchMedia && window.matchMedia(q).matches);
+  useEffect(() => { if (!window.matchMedia) return; const m = window.matchMedia(q); const f = () => setD(m.matches); m.addEventListener ? m.addEventListener('change', f) : m.addListener(f); return () => { m.removeEventListener ? m.removeEventListener('change', f) : m.removeListener(f); }; }, []);
+  return d;
+}
 function Casca({ usuario, sair, trocarPerfil }) {
   useStore();
   const [nav, setNav] = useState(() => { try { const a = sessionStorage.getItem('ccg_aba'); if (a && ABAS.find(x => x.id === a)) return { aba: a, tela: '', p: {} }; } catch (e) {} return { aba: 'receb', tela: '', p: {} }; });
@@ -1210,6 +1264,11 @@ function Casca({ usuario, sair, trocarPerfil }) {
   const badges = contarBadges(usuario); useFilaDrive(usuario);
   return html`<div className="app">
     <${T} key=${nav.aba + nav.tela + JSON.stringify(nav.p)} ctx=${ctx} />
+    <aside className="side" aria-label="Menu">
+      <div className="marca"><span className="lg">${window.__LOGO__ ? html`<img src=${window.__LOGO__} alt="CCG" />` : html`<${Ic} n="box" s=${22} c="#13152B" />`}</span><span><span className="eyebrow">CCG · Gávea</span><b>Controle de Peças</b></span></div>
+      ${ABAS.map(a => html`<button key=${a.id} className=${'nv' + (nav.aba === a.id ? ' on' : '')} aria-current=${nav.aba === a.id ? 'page' : undefined} onClick=${() => ir(a.id)}><${Ic} n=${a.d} s=${20} /><span className="t">${a.nome}</span>${badges[a.id] ? html`<span className="bd">${badges[a.id]}</span>` : null}</button>`)}
+      <button className="eu" onClick=${() => setMenu(true)}><span className="av">${iniciais(usuario.nome)}</span><span><b>${usuario.nome}</b><small>${PERFIS[usuario.perfil] ? PERFIS[usuario.perfil].nome : ''}</small></span></button>
+    </aside>
     <nav className="bottomnav" aria-label="Abas"><div className="in">${ABAS.map(a => html`<button key=${a.id} className=${nav.aba === a.id ? 'on' : ''} aria-current=${nav.aba === a.id ? 'page' : undefined} onClick=${() => ir(a.id)}>
       <${Ic} n=${a.d} />${a.nome}${badges[a.id] ? html`<span className="badge">${badges[a.id]}</span>` : null}</button>`)}</div></nav>
     ${menu && html`<${MenuPerfil} ctx=${ctx} aoFechar=${() => setMenu(false)} sair=${sair} trocarPerfil=${trocarPerfil} instalar=${() => setInst(true)} />`}
@@ -1493,8 +1552,10 @@ function TelaRecebimento({ ctx }) {
         <span style=${{ fontSize: 26, fontWeight: 700, lineHeight: 1.15 }}>${notas.filter(F[k]).length}</span><span className="t3">${sub}</span></button>`; })}</div>
     ${filtradas && html`<div className="sec">${{ falta: 'Notas com falta', sobra: 'Notas com sobra', ok: 'Notas sem diferença' }[filtro]}<button className="link" style=${{ padding: 0 }} onClick=${() => setF('todas')}>Fechar ✕</button></div>
       ${filtradas.length ? lista(filtradas) : html`<div className="card"><${Vazio}>Nenhuma nota aqui.</${Vazio}></div>`}`}
+    <div className="dcols l"><div className="dcol">
     <div className="sec">Para conferir agora<span className="t2">${plural(abertas.length, 'nota')}</span></div>
     ${abertas.length ? abertas.map(cartaoAberta) : html`<div className="card"><${Vazio}>Nenhuma nota esperando conferência.${podeNotas ? ' Toque em "Subir" para mandar as notas que chegaram.' : ''}</${Vazio}></div>`}
+    </div><div className="dcol">
     <div className="sec">Empresas<span className="t2">${plural(empresas.length, 'empresa')}</span></div>
     ${empresas.length ? html`<div className="card">${empresas.map(e => {
       const pc = e.ns.reduce((t, n) => t + (n.itens || []).reduce((a, i) => a + (Number(i.qtd) || 0), 0), 0);
@@ -1504,7 +1565,7 @@ function TelaRecebimento({ ctx }) {
         <span style=${{ display: 'flex', gap: 4, flex: 'none' }}>${(marcas.length ? marcas : [['ok', '✓']]).map(([k, n]) => html`<span key=${k} style=${{ height: 24, padding: '0 8px', borderRadius: 999, background: 'var(--bg)', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 5 }}><span className="dot" style=${{ width: 7, height: 7, background: SIT_COR[k] }}></span>${n}</span>`)}</span>
         <span className="chev">›</span></button>`; })}</div>
       <div style=${{ display: 'flex', gap: 14, flexWrap: 'wrap', padding: '0 4px' }} className="t3">${[['conferir', 'a conferir'], ['falta', 'com falta'], ['sobra', 'com sobra'], ['ok', 'tudo certo']].map(([k, l]) => html`<span key=${k} style=${{ display: 'flex', alignItems: 'center', gap: 5 }}><span className="dot" style=${{ width: 9, height: 9, background: SIT_COR[k] }}></span>${l}</span>`)}</div>`
-      : html`<div className="card"><${Vazio}>Nenhuma nota ainda.</${Vazio}></div>`}`}
+      : html`<div className="card"><${Vazio}>Nenhuma nota ainda.</${Vazio}></div>`}</div></div>`}
     ${podeNotas && html`<button className="link" style=${{ alignSelf: 'center' }} onClick=${manual}>Cadastrar nota à mão</button>`}
     ${locProj && html`<${DefinirLocal} titulo="Local do projeto" texto="O app não achou o local no projeto nem uma nota ligada a ele. Digite o local ou escolha um que já existe." lido=${(store.pegar('projetos', locProj.projs[0]) || {}).localLido} aoFechar=${() => setLocProj(null)} aoSalvar=${(l) => { store.gravarVarios(locProj.projs.map(id => ({ c: 'projetos', doc: Object.assign({}, store.pegar('projetos', id), { local: l }) }))); upd(locProj.id, { semLocal: false, msg: locProj.msg + ' · ' + l }); setLocProj(null); toast('Local salvo.'); }} />`}
   </${Tela}>`;
@@ -1797,8 +1858,8 @@ function TelaCD({ ctx }) {
       ${!achados.locais.length && !achados.notas.length && !achados.pecas.length && html`<${Vazio}>Nada encontrado para "${q}".</${Vazio}>`}` : html`
       ${pode(u, 'cd') && chegando.length > 0 && html`<div className="card">${chegando.map(r => html`<button key=${r.id} className="row" onClick=${() => ir('cd', 'receber', { id: r.id, volta: { aba: 'cd' } })}>
         <span className="dot" style=${{ background: 'var(--y)' }}></span><span className="grow"><div className="t1">Devolução chegando · ${r.origem}</div><div className="t2">${r.numero} · ${nfmt(r.itens.reduce((t, i) => t + (i.enviado || i.qtd), 0))} peças · conferir e receber</div></span><span className="chev">›</span></button>`)}</div>`}
-      ${comNotas.map(cardLocal)}
-      ${semNotas.map(r => html`<button key=${r.local} className="card" onClick=${() => ir('cd', 'local', { local: r.local })}><div className="row"><span className="grow"><div style=${{ fontSize: 17, fontWeight: 700 }}>${r.local}</div><div className="t2">Nenhuma nota ainda</div></span><span className="chev">›</span></div></button>`)}
+      <div className="dgrid">${comNotas.map(cardLocal)}
+      ${semNotas.map(r => html`<button key=${r.local} className="card" onClick=${() => ir('cd', 'local', { local: r.local })}><div className="row"><span className="grow"><div style=${{ fontSize: 17, fontWeight: 700 }}>${r.local}</div><div className="t2">Nenhuma nota ainda</div></span><span className="chev">›</span></div></button>`)}</div>
       ${semNota > 0 && html`<div className="note b">${nfmt(semNota)} peças sem nota (sobras registradas). Veja em Gestão › Pendências.</div>`}
       <div className="grid2">
         <button className="btn white sm" onClick=${() => ir('cd', 'baias')}><${Ic} n="box" s=${18} />Estoque por baia</button>
@@ -2190,7 +2251,7 @@ function StatusDrive({ r }) {
   return html`<span className="t3" style=${{ display: 'flex', alignItems: 'center', gap: 6 }}><span className="dot" style=${{ background: ok ? 'var(--ok)' : 'var(--yellow, #B8962E)' }}></span>${ok ? 'Termos salvos no Drive' : r.drive.erro ? 'Drive: ' + r.drive.erro : 'Termos aguardando envio ao Drive'}</span>`;
 }
 function TelaPedidos({ ctx }) {
-  const { usuario: u, ir } = ctx; useStore();
+  const { usuario: u, ir } = ctx; useStore(); const desk = useDesk();
   const resp = pode(u, 'separar') || pode(u, 'retirar');
   const todos = store.todos('remessas').filter(r => r.tipo === 'pedido').sort((a, b) => (a.dataUso || '').localeCompare(b.dataUso || '') || (a.criadoEm || '').localeCompare(b.criadoEm || ''));
   const noPrazo = new Date().getHours() < HORA_LIMITE_PEDIDO;
@@ -2203,7 +2264,7 @@ function TelaPedidos({ ctx }) {
     return html`<${Tela} ctx=${ctx} eyebrow=${'Usuário · ' + u.nome} titulo="Pedidos">
       ${botao}
       <div className="sec">Meus pedidos</div>
-      ${abertos.length ? abertos.map(r => html`<${PedidoCard} key=${r.id} ctx=${ctx} r=${r} />`) : html`<div className="card"><${Vazio}>Nenhum pedido em andamento.</${Vazio}></div>`}
+      ${abertos.length ? html`<div className="dgrid">${abertos.map(r => html`<${PedidoCard} key=${r.id} ctx=${ctx} r=${r} />`)}</div>` : html`<div className="card"><${Vazio}>Nenhum pedido em andamento.</${Vazio}></div>`}
       ${fechados.length > 0 && html`<div className="sec">Anteriores</div><div className="card">${fechados.map(r => { const [sl, sc] = infoPedido(r); return html`<div key=${r.id} className="row"><span className="grow"><div className="t1">${r.destino} · ${fmtDataCurta(r.dataUso)}</div><div className="t2">${r.numero} · ${plural(r.itens.length, 'tipo')}</div></span><span className=${'tag ' + sc}>${sl}</span></div>`; })}</div>`}
       <div className="hint">A retirada e o termo são feitos no celular do almoxarifado. Aqui você acompanha cada etapa.</div>
     </${Tela}>`;
@@ -2221,9 +2282,11 @@ function TelaPedidos({ ctx }) {
   const lista = ativo.lista.filter(r => !busca || norm([r.destino, r.numero, r.solicitante, r.termo && r.termo.colaborador.nome, r.termo && r.termo.colaborador.matricula].join(' ')).includes(norm(busca)));
   return html`<${Tela} ctx=${ctx} eyebrow=${'Responsável · ' + u.nome} titulo="Pedidos">
     ${botao}
+    ${desk ? html`<div className="kanban">${grupos.map(x => html`<div key=${x.id} className="kcol"><div className="kh"><span className="dot" style=${{ width: 9, height: 9, background: ({ solicitado: '#B8962E', separado: '#4A6491', retirado: '#3E7A5E', quitado: '#8A9289' })[x.id] }}></span>${({ solicitado: 'A separar', separado: 'Separados · retirar', retirado: 'Com termo aberto', quitado: 'Quitados' })[x.id]}<span className="n">${x.lista.length}</span></div>
+      ${x.lista.length ? x.lista.slice(0, x.id === 'quitado' ? 12 : 60).map(r => ehLegado(r) ? html`<${PedidoLegado} key=${r.id} r=${r} />` : html`<${PedidoCard} key=${r.id} ctx=${ctx} r=${r} />`) : html`<div className="t3" style=${{ padding: '8px 4px' }}>Nada aqui.</div>`}</div>`)}</div>` : html`
     <div className="seg" role="tablist">${grupos.map(x => html`<button key=${x.id} role="tab" aria-selected=${x.id === ativo.id} className=${x.id === ativo.id ? 'on' : ''} onClick=${() => escolher(x.id)}><b>${x.id === 'quitado' ? '' : x.lista.length}</b>${x.nome}</button>`)}</div>
     ${ativo.id !== 'solicitado' && ativo.id !== 'separado' && html`<label className="search"><${Ic} n="search" s=${20} /><input value=${busca} onChange=${(e) => setBusca(e.target.value)} placeholder="Frente, pedido ou colaborador" /></label>`}
-    ${lista.length ? lista.map(r => ehLegado(r) ? html`<${PedidoLegado} key=${r.id} r=${r} />` : html`<${PedidoCard} key=${r.id} ctx=${ctx} r=${r} />`) : html`<div className="card"><${Vazio}>${({ solicitado: 'Nenhum pedido esperando separação.', separado: 'Nada separado esperando retirada.', retirado: 'Nenhum termo aberto.', quitado: 'Nada por aqui ainda.' })[ativo.id]}</${Vazio}></div>`}
+    ${lista.length ? lista.map(r => ehLegado(r) ? html`<${PedidoLegado} key=${r.id} r=${r} />` : html`<${PedidoCard} key=${r.id} ctx=${ctx} r=${r} />`) : html`<div className="card"><${Vazio}>${({ solicitado: 'Nenhum pedido esperando separação.', separado: 'Nada separado esperando retirada.', retirado: 'Nenhum termo aberto.', quitado: 'Nada por aqui ainda.' })[ativo.id]}</${Vazio}></div>`}`}
   </${Tela}>`;
 }
 function PedidoLegado({ r }) { // pedidos do fluxo antigo (antes do termo)
@@ -2558,17 +2621,20 @@ function TelaGestao({ ctx }) {
       <${Kpi} v=${nfmt(faltaQ)} l=${'em falta · ' + brl(faltaV).replace(',00', '')} cor="var(--mag-t)" />
       <${Kpi} v=${adesao == null ? '—' : adesao + '%'} l="adesão à contagem (7 dias)" />
     </div>
+    <div className="dcols"><div className="dcol">
     <div className="sec">Visão total <span className="t2">${nfmt(tot.qtd)} peças em notas</span></div>
     <div className="card pad" style=${{ gap: 10 }}><${BarraLocal} r=${tot} /><${Num4} r=${tot} />
       ${tot.transito > 0 && html`<div className="t2">${nfmt(tot.transito)} em trânsito</div>`}</div>
     <div className="card">${vis.filter(x => x.notas.length).map(x => html`<button key=${x.local} className="row" onClick=${() => ir('cd', 'local', { local: x.local })}>
       <span className="grow"><div className="t1">${x.local}</div><div className="t2">${nfmt(x.cd)} no CD · ${nfmt(x.ag)} aguardando · ${nfmt(x.mo)} montadas${x.falta ? ' · ' + nfmt(x.falta) + ' em falta' : ''}</div></span><span className="chev">›</span></button>`)}
       ${!vis.some(x => x.notas.length) && html`<${Vazio}>Nenhuma nota conferida ainda.</${Vazio}>`}</div>
+    </div><div className="dcol">
     <div className="sec">Peças paradas <span className="t2">aguardando montagem</span></div>
     <div className="card">${paradas.length ? (todasParadas ? paradas : paradas.slice(0, 6)).map(p => html`<button key=${p.local + p.key} className="row" onClick=${() => ir('cd', 'local', { local: p.local })}>
       <span className="grow"><div className="t1">${p.aguardando} × ${p.desc}</div><div className="t2">${p.local} · ${brl(p.valorParado)}</div></span><span className=${'tag ' + corDias(p.diasParado)}>${plural(p.diasParado, 'dia')}</span></button>`) : html`<${Vazio}>Nenhuma peça aguardando montagem.</${Vazio}>`}
       ${paradas.length > 6 && html`<button className="link" style=${{ padding: '12px 16px' }} onClick=${() => setTodasParadas(!todasParadas)}>${todasParadas ? 'Mostrar menos' : 'Ver todas (' + paradas.length + ')'}</button>`}</div>
     <button className="card" onClick=${() => ir('gestao', 'pendencias')}><div className="row"><span className="dot" style=${{ background: abertas.length ? 'var(--mag)' : 'var(--ok)' }}></span><span className="grow"><div className="t1">Pendências abertas · ${abertas.length}</div><div className="t2">${abertas.length ? nfmt(faltaQ) + ' peças em falta · ' + brl(faltaV) + ' em risco' : 'Nenhuma falta ou sobra em aberto'}</div></span><span className="chev">›</span></div></button>
+    </div></div>
     <div className="sec">Contagem · últimos 7 dias</div>
     ${ativos.length ? ativos.map(l => html`<div key=${l} className="card pad" style=${{ gap: 10 }}><span className="t2">${l}</span><div className="dias7">${[6, 5, 4, 3, 2, 1, 0].map(i => { const d = addDias(H, -i); const c = contagemDoDia(l, d); return html`<span key=${i}><span className="q" style=${{ background: c ? 'var(--green-bg)' : 'var(--mag-bg)', color: c ? 'var(--green-t)' : 'var(--mag-t)' }}>${c ? '✓' : '—'}</span><span className="t3">${diaSemana(d)}</span></span>`; })}</div></div>`) : html`<div className="card"><${Vazio}>Nenhuma frente com peças ainda.</${Vazio}></div>`}
     <div className="grid2">
