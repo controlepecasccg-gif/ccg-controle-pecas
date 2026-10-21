@@ -205,6 +205,18 @@ table.tb td input{width:100%;height:42px;border:1px solid var(--line);border-rad
 .login .panel{flex:1;background:var(--bg);border-radius:28px 28px 0 0;padding:32px 24px calc(28px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:16px}
 .login .logo{width:132px;height:auto;align-self:center;opacity:.9;mix-blend-mode:multiply}
 @media (min-width:560px){.login{min-height:auto;margin:40px auto;border-radius:28px;overflow:hidden}.login .panel{border-radius:28px}}
+.seg{display:flex;background:#E6EAE0;border-radius:14px;padding:4px;gap:4px}
+.seg button{flex:1;min-height:50px;border:none;border-radius:11px;background:transparent;font-size:12px;font-weight:600;color:var(--navy);display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.25;font-family:inherit}
+.seg button b{font-size:16px}
+.seg button.on{background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.leitor{position:fixed;inset:0;z-index:80;background:#000;display:flex;flex-direction:column}
+.leitor video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.leitor .moldura{position:absolute;left:50%;top:45%;width:min(70vw,300px);aspect-ratio:1;transform:translate(-50%,-50%);border:3px solid #AEC155;border-radius:24px;box-shadow:0 0 0 9999px rgba(0,0,0,.45)}
+.leitor .lt-topo{position:relative;display:flex;align-items:center;justify-content:space-between;padding:calc(12px + env(safe-area-inset-top)) 12px 12px;color:#fff;font-size:17px}
+.leitor .lt-x{width:44px;height:44px;border-radius:999px;border:none;background:rgba(0,0,0,.5);color:#fff;display:flex;align-items:center;justify-content:center}
+.leitor .lt-msg{position:absolute;left:16px;right:16px;bottom:calc(96px + env(safe-area-inset-bottom));text-align:center;color:#fff;font-weight:600;font-size:15px;background:rgba(0,0,0,.55);border-radius:14px;padding:12px}
+.leitor .lt-msg.erro{background:rgba(122,21,86,.85)}
+.leitor .lt-dig{position:absolute;left:16px;right:16px;bottom:calc(24px + env(safe-area-inset-bottom))}
 </style>
 </head>
 <body>
@@ -238,7 +250,7 @@ const FIREBASE_CONFIG = {
 const ADMIN_EMAILS = ['controlepecasccg@gmail.com'];
 const HORA_LIMITE_PEDIDO = 16; // pedidos para o dia seguinte até 16h
 const DIAS_PARADA_ALERTA = 7;  // peça aguardando há mais de X dias = alerta
-const APP_VERSAO = '2.0.0';
+const APP_VERSAO = '2.1.0';
 const DWG_MAX_MB = 25; // DWG guardado em partes no Firestore (plano gratuito)
 
 const LOCAIS_PADRAO = ['Passagem de emergência', 'SSR 04', 'Apêndice', 'Carioca', 'Túnel de Interligação', 'Jardim Oceânico'];
@@ -246,8 +258,10 @@ const FORNECEDORES_PADRAO = ['Mills', 'SH'];
 
 // As 4 abas são iguais para todos. O perfil só define o que a pessoa pode alterar.
 const PERFIS = {
-  escritorio: { nome: 'Escritório / Planejamento', pode: ['notas', 'cd', 'transporte', 'frente', 'pedir', 'pendencias', 'projetos', 'config'] },
-  almoxarife: { nome: 'Almoxarife do CD', pode: ['notas', 'cd', 'transporte', 'pendencias'] },
+  escritorio: { nome: 'Escritório / Planejamento', pode: ['notas', 'cd', 'transporte', 'frente', 'pedir', 'pedirOutro', 'separar', 'retirar', 'pendencias', 'projetos', 'config'] },
+  responsavel:{ nome: 'Responsável (almoxarifado)', pode: ['notas', 'cd', 'transporte', 'pedir', 'pedirOutro', 'separar', 'retirar', 'pendencias'] },
+  usuario:    { nome: 'Usuário (pede peças)', pode: ['pedir'] },
+  almoxarife: { nome: 'Almoxarife do CD', pode: ['notas', 'cd', 'transporte', 'pendencias', 'separar', 'retirar', 'pedir', 'pedirOutro'] },
   conferente: { nome: 'Conferente', pode: ['notas'] },
   transporte: { nome: 'Quem busca (transporte)', pode: ['transporte'] },
   frente:     { nome: 'Responsável da frente', pode: ['frente', 'pedir'] },
@@ -255,6 +269,9 @@ const PERFIS = {
   gestor:     { nome: 'Gestor (consulta)', pode: [] }
 };
 // pode(u, 'frente', local): o responsável de frente só mexe na própria frente
+// Tipo de acesso pelo e-mail de login: fulano@responsavel.com ou fulano@usuario.com
+const DOMINIOS_PERFIL = { 'responsavel.com': 'responsavel', 'usuario.com': 'usuario' };
+function perfilDoEmail(email) { const d = String(email || '').toLowerCase().split('@')[1] || ''; return DOMINIOS_PERFIL[d] || null; }
 function pode(u, acao, local) {
   if (!u || !PERFIS[u.perfil]) return false;
   if (!PERFIS[u.perfil].pode.includes(acao)) return false;
@@ -573,7 +590,7 @@ function locaisComSaldo() {
 }
 function remessaStatusInfo(st) {
   return ({
-    solicitado: ['Solicitado', 'y'], separado: ['Separado', 'b'], em_transito: ['Em trânsito', 'o'],
+    solicitado: ['Solicitado', 'y'], separado: ['Separado', 'b'], retirado: ['Termo aberto', 'ok'], quitado: ['Termo quitado', 'g'], em_transito: ['Em trânsito', 'o'],
     aguardando_recebimento: ['Entregue · aguardando confirmação', 'o'], recebido: ['Recebido', 'ok'], cancelado: ['Cancelado', 'g']
   })[st] || [st, 'g'];
 }
@@ -846,6 +863,8 @@ function semearDemo(st) {
   [r1, r2].forEach(r => { ops.push({ c: 'remessas', doc: r }); r.itens.forEach(it => { ops.push({ c: 'movimentos', doc: { id: uid('mv'), tipo: 'saida', key: it.key, qtd: it.enviado, de: 'CD', para: 'TR:' + r.id, ref: r.id, nf: 'nf64814', quem: 'Transporte (demo)', em: r.retiradoEm } }); ops.push({ c: 'movimentos', doc: { id: uid('mv'), tipo: 'recebimento', key: it.key, qtd: it.recebido, de: 'TR:' + r.id, para: 'F:Passagem de emergência', ref: r.id, nf: 'nf64814', quem: 'Responsável (demo)', em: r.recebidoEm } }); }); });
   // pedido de amanhã aguardando separação
   ops.push({ c: 'remessas', doc: { id: 'rm-demo3', numero: 'PD-DEMO-003', tipo: 'pedido', origem: 'CD', destino: 'Passagem de emergência', dataUso: addDias(H, 1), itens: [{ key: k('2001565'), qtd: 26 }, { key: k('2000340'), qtd: 12 }, { key: k('2000344'), qtd: 10 }], status: 'solicitado', solicitante: 'Solicitante (demo)', obs: 'Montagem do trecho entre eixos 2 e 3', criadoEm: em(0, '10:15'), noPrazo: true, historico: [{ st: 'solicitado', em: em(0, '10:15'), por: 'Solicitante (demo)' }] } });
+  // pedido separado, esperando a retirada com termo
+  ops.push({ c: 'remessas', doc: { id: 'rm-demo4', numero: 'PD-DEMO-004', tipo: 'pedido', origem: 'CD', destino: 'Passagem de emergência', dataUso: H, itens: [{ key: k('2001565'), qtd: 20, enviado: 20 }, { key: k('2000340'), qtd: 6, enviado: 6 }], status: 'separado', solicitante: 'MARCOS LIMA', solicitanteMat: '1187', registradoPor: 'Almoxarifado (demo)', criadoEm: em(1, '15:20'), separadoEm: em(0, '06:30'), separadoPor: 'Ana (CD)', noPrazo: true, historico: [] } });
   // contagens diárias (montagem progressiva das vigas 1,50)
   const L = 'Passagem de emergência';
   const seqMont = [[9, 0], [8, 12], [7, 24], [6, 36], [5, 40], [4, 48], [2, 48], [1, 48]];
@@ -1151,9 +1170,8 @@ function contarBadges(u) {
   const b = {}; const H = hoje(); const rems = store.todos('remessas'); const notas = store.todos('notas');
   if (pode(u, 'notas')) b.receb = notas.filter(n => ['rascunho', 'liberada', 'em_conferencia'].includes(n.status)).length;
   let p = 0;
-  if (pode(u, 'cd')) p += rems.filter(r => r.tipo === 'pedido' && r.status === 'solicitado').length;
-  if (pode(u, 'transporte')) p += rems.filter(r => r.tipo === 'pedido' && ['separado', 'em_transito'].includes(r.status)).length;
-  if (pode(u, 'frente')) p += rems.filter(r => r.tipo === 'pedido' && r.status === 'aguardando_recebimento' && pode(u, 'frente', r.destino)).length;
+  if (pode(u, 'separar')) p += rems.filter(r => r.tipo === 'pedido' && r.status === 'solicitado').length;
+  if (pode(u, 'retirar')) p += rems.filter(r => r.tipo === 'pedido' && r.status === 'separado').length;
   b.pedidos = p;
   let c = 0;
   if (pode(u, 'cd')) c += rems.filter(r => r.destino === 'CD' && ['em_transito', 'aguardando_recebimento'].includes(r.status)).length;
@@ -1166,7 +1184,7 @@ function contarBadges(u) {
 const TELAS_ABA = () => ({
   receb: { '': TelaRecebimento, empresa: TelaEmpresa, revisar: RevisarNota, conferir: TelaConferencia, nota: DetalheNota },
   cd: { '': TelaCD, local: TelaLocal, contagem: ContagemDia, receber: TelaReceberRemessa, projetos: TelaProjetos, projeto: VerProjeto, baias: TelaBaias },
-  pedidos: { '': TelaPedidos, novo: NovoPedido, separar: SepararPedido, receber: TelaReceberRemessa },
+  pedidos: { '': TelaPedidos, novo: NovoPedido, separar: SepararPedido, retirada: TelaRetirada, devolucao: TelaDevolucao, termo: TelaTermo, receber: TelaReceberRemessa },
   gestao: { '': TelaGestao, catalogo: TelaCatalogo, config: TelaConfig, pendencias: TelaPendencias }
 });
 function Casca({ usuario, sair, trocarPerfil }) {
@@ -1183,7 +1201,7 @@ function Casca({ usuario, sair, trocarPerfil }) {
   const fecharInst = () => { setInst(false); try { localStorage.setItem('ccg_inst_off', String(Date.now())); } catch (e) {} };
   const ctx = { usuario, ir, nav, abrirMenu: () => setMenu(true) };
   const T = (TELAS_ABA()[nav.aba] || {})[nav.tela] || TELAS_ABA()[nav.aba][''];
-  const badges = contarBadges(usuario);
+  const badges = contarBadges(usuario); useFilaDrive(usuario);
   return html`<div className="app">
     <${T} key=${nav.aba + nav.tela + JSON.stringify(nav.p)} ctx=${ctx} />
     <nav className="bottomnav" aria-label="Abas"><div className="in">${ABAS.map(a => html`<button key=${a.id} className=${nav.aba === a.id ? 'on' : ''} aria-current=${nav.aba === a.id ? 'page' : undefined} onClick=${() => ir(a.id)}>
@@ -1640,7 +1658,7 @@ function TelaConferencia({ ctx }) {
   </${Tela}>`;
 }
 // Assinatura com o dedo (ou mouse). Devolve a imagem em PNG.
-function Assinatura({ rotulo, valor, set }) {
+function Assinatura({ rotulo, valor, set, h }) {
   const ref = useRef(); const st = useRef({ des: false, vazio: !valor });
   useEffect(() => {
     const c = ref.current; const r = c.getBoundingClientRect(); const k = 2;
@@ -1655,7 +1673,7 @@ function Assinatura({ rotulo, valor, set }) {
   const limpar = () => { const c = ref.current; c.getContext('2d').clearRect(0, 0, c.width, c.height); st.current.vazio = true; set(null); };
   return html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 6 }}>
     <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}><span className="lb" style=${{ fontSize: 14, fontWeight: 600 }}>${rotulo}</span><button className="link" style=${{ padding: 0, color: 'var(--muted)' }} onClick=${limpar}>Limpar</button></div>
-    <div style=${{ position: 'relative', borderRadius: 14, border: '1px dashed #B9BFB2', background: '#FAFBF8', height: 150 }}>
+    <div style=${{ position: 'relative', borderRadius: 14, border: '1px dashed #B9BFB2', background: '#FAFBF8', height: h || 150 }}>
       <canvas ref=${ref} aria-label=${'Assinatura: ' + rotulo} style=${{ width: '100%', height: '100%', touchAction: 'none', display: 'block', borderRadius: 14 }} onPointerDown=${ini} onPointerMove=${mov} onPointerUp=${fim} onPointerCancel=${fim} onPointerLeave=${fim}></canvas>
       <span style=${{ position: 'absolute', left: 16, right: 16, bottom: 34, borderTop: '1px solid #D7DBD0', pointerEvents: 'none' }}></span>
       ${!valor && html`<span className="t3" style=${{ position: 'absolute', left: 0, right: 0, bottom: 12, textAlign: 'center', pointerEvents: 'none' }}>assine aqui com o dedo</span>`}
@@ -2022,63 +2040,196 @@ function NovoPonto({ aoFechar, aoSalvar, ultima }) {
     ${pick && html`<${EscolherPeca} aoFechar=${() => setPick(false)} aoEscolher=${(k) => { setKey(k); setRot(rot || catalogoItem(k).rotulo || ''); setPick(false); }} />`}
   </${Sheet}>`;
 }
-/* ================= ABA 3 · PEDIDOS ================= */
-function Etapas({ r }) {
-  const etapas = [['Pedido', r.criadoEm], ['Separado', r.separadoEm], ['Retirado', r.retiradoEm], ['Recebido', r.recebidoEm]];
-  return html`<div style=${{ display: 'flex', gap: 4 }}>${etapas.map(([l, d]) => html`<span key=${l} style=${{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}><span style=${{ height: 5, borderRadius: 999, background: d ? 'var(--green)' : 'var(--soft)' }}></span><span className="t3">${l}${d ? ' ' + fmtHora(d) : ''}</span></span>`)}</div>`;
+/* ================= ABA 3 · PEDIDOS =================
+   Cada etapa é feita por uma pessoa diferente:
+   pedido (usuário ou responsável em nome de alguém) → separado (CD) → retirado (termo assinado no celular do almoxarifado)
+   → devoluções por partes → termo quitado.
+   rem.termo = { colaborador:{nome,matricula,cargo,setor}, responsavelSetor, obra, em, rubrica, assColab, respNome, respMat, assResp,
+                 itens:[{key, qtd, nfs:{nfId:q}}] }
+   rem.devolucoes = [{ n, em, por, visto, itens:{key:qtd} }] */
+const OBRA_TERMO = 'CONSÓRCIO CONSTRUTOR GÁVEA';
+const ST_NOVOS = ['solicitado', 'separado', 'retirado', 'quitado', 'cancelado'];
+function ehLegado(r) { return !ST_NOVOS.includes(r.status); }
+function devolvidoTermo(r) { const o = {}; (r.devolucoes || []).forEach(d => Object.keys(d.itens || {}).forEach(k => o[k] = (o[k] || 0) + (Number(d.itens[k]) || 0))); return o; }
+function totaisTermo(r) {
+  const t = r.termo; if (!t) return { ret: 0, dev: 0, falta: 0 };
+  const dv = devolvidoTermo(r); const ret = t.itens.reduce((a, i) => a + i.qtd, 0); const dev = t.itens.reduce((a, i) => a + Math.min(i.qtd, dv[i.key] || 0), 0);
+  return { ret, dev, falta: ret - dev };
 }
+function nomeNF(id) { const n = store.pegar('notas', id); return n ? 'NF ' + n.numero : 'sem nota'; }
+function nfsTexto(nfs) { return Object.keys(nfs || {}).filter(id => nfs[id] > 0).map(nomeNF).join(', '); }
+
+/* ---------- crachá: leitura do QR (mesmo leitor do app de Segurança do Trabalho) ---------- */
+// Formato do crachá: EMPRESA;MATRÍCULA;NOME;CARGO;GÊNERO;;OBRA
+function pareceNome(v) { v = String(v || '').trim(); return /^[A-Za-zÀ-ÿ'´`.\s-]+$/.test(v) && v.replace(/[^A-Za-zÀ-ÿ]/g, '').length >= 3; }
+function lerCrachaTexto(txt) {
+  const bruto = String(txt || '').trim(); if (!bruto) return null;
+  const p = bruto.split(';').map(s => s.trim());
+  if (p.length >= 4 && pareceNome(p[2])) return { nome: p[2].replace(/\s+/g, ' ').toUpperCase(), matricula: (p[1] || '').toUpperCase().slice(0, 20), cargo: (p[3] || '').toUpperCase() };
+  const out = { nome: '', matricula: '', cargo: '' };
+  try { const o = JSON.parse(bruto); if (o && typeof o === 'object') { const k = (...ns) => { for (const n of Object.keys(o)) if (ns.includes(norm(n))) return String(o[n] || '').trim(); return ''; }; out.nome = k('nome', 'name', 'nomecompleto'); out.matricula = k('matricula', 'mat', 'registro', 're', 'chapa'); out.cargo = k('cargo', 'funcao'); } } catch (e) {
+    const pares = bruto.split(/[\n;|]/).map(x => x.match(/^\s*([A-Za-zÀ-ÿ. ]{2,20})\s*[:=]\s*(.+)$/)).filter(Boolean);
+    if (pares.length >= 2) pares.forEach(([, k, v]) => { k = norm(k); v = v.trim(); if (/nome/.test(k)) out.nome = v; else if (/matr|registro|chapa|^re$/.test(k)) out.matricula = v; else if (/cargo|func/.test(k)) out.cargo = v; });
+    else {
+      const sep = [';', '|', '\t', '\n', ','].map(c => [c, bruto.split(c).length]).sort((a, b) => b[1] - a[1])[0];
+      const campos = sep[1] > 1 ? bruto.split(sep[0]).map(x => x.trim()).filter(Boolean) : [bruto];
+      out.matricula = campos.find(c => /^\d{1,10}$/.test(c)) || '';
+      out.nome = campos.filter(c => pareceNome(c) && c.split(/\s+/).length >= 2).sort((a, b) => b.split(/\s+/).length - a.split(/\s+/).length)[0] || '';
+    }
+  }
+  out.nome = out.nome.replace(/\s+/g, ' ').trim().toUpperCase(); out.matricula = String(out.matricula).trim().toUpperCase(); out.cargo = String(out.cargo).trim().toUpperCase();
+  return out.nome ? out : null;
+}
+function textoQR(r) { // alguns crachás gravam acentos em Latin-1; o jsQR devolve vazio nesses casos
+  if (!r) return null; if (r.data) return r.data;
+  const b = r.binaryData && new Uint8Array(r.binaryData); if (!b || !b.length) return null;
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(b); } catch (e) {}
+  try { return new TextDecoder('windows-1252').decode(b); } catch (e) {}
+  return String.fromCharCode.apply(null, b);
+}
+function bip(ok) { try { navigator.vibrate && navigator.vibrate(ok ? 70 : [60, 60, 60]); } catch (e) {} }
+function LeitorCracha({ aoLer, aoFechar }) {
+  const vRef = useRef(); const [msg, setMsg] = useState('Abrindo a câmera…'); const [erro, setErro] = useState(false);
+  useEffect(() => {
+    let vivo = true, stream = null, timer = null, det = null, tique = 0, ocupado = false; const cv = document.createElement('canvas');
+    (async () => {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { setMsg('Este navegador não deixa usar a câmera. Use "Digitar".'); setErro(true); return; }
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+        if (!vivo) { stream.getTracks().forEach(t => t.stop()); return; }
+        vRef.current.srcObject = stream; await vRef.current.play().catch(() => {});
+        if ('BarcodeDetector' in window) { try { const f = await window.BarcodeDetector.getSupportedFormats(); if (f.includes('qr_code')) det = new window.BarcodeDetector({ formats: ['qr_code'] }); } catch (e) {} }
+        if (!det) await loadScript('jsqr.js'); else loadScript('jsqr.js').catch(() => {});
+        setMsg('Aponte para o QR code do crachá');
+        timer = setInterval(async () => {
+          const v = vRef.current; if (!v || ocupado || v.readyState < 2) return; ocupado = true; tique++;
+          try {
+            let txt = null;
+            if (det && (!window.jsQR || tique % 2 === 0)) { try { const r = await det.detect(v); txt = r && r[0] && r[0].rawValue; if (txt && txt.includes('�')) txt = null; } catch (e) { det = null; } }
+            else if (window.jsQR) { const vw = v.videoWidth, vh = v.videoHeight; if (vw) { const k = Math.min(1, 720 / Math.max(vw, vh)), w = Math.round(vw * k), h = Math.round(vh * k); cv.width = w; cv.height = h; const g = cv.getContext('2d', { willReadFrequently: true }); g.drawImage(v, 0, 0, w, h); txt = textoQR(window.jsQR(g.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' })); } }
+            if (txt && vivo) { const p = lerCrachaTexto(txt); bip(!!p); if (p) { vivo = false; aoLer(p); } else setMsg('Li um QR, mas não reconheci o crachá. Tente de novo ou digite.'); }
+          } finally { ocupado = false; }
+        }, 170);
+      } catch (e) { setMsg(/NotAllowed|Permission/i.test(e && e.name || '') ? 'A câmera não foi liberada. Use "Digitar".' : 'Não consegui abrir a câmera. Use "Digitar".'); setErro(true); }
+    })();
+    return () => { vivo = false; clearInterval(timer); if (stream) stream.getTracks().forEach(t => t.stop()); };
+  }, []);
+  return html`<div className="leitor" role="dialog" aria-label="Ler crachá">
+    <video ref=${vRef} playsInline muted></video><div className="moldura"></div>
+    <div className="lt-topo"><button className="lt-x" aria-label="Fechar" onClick=${aoFechar}><${Ic} n="x" s=${22} /></button><b>Ler crachá</b><span style=${{ width: 44 }}></span></div>
+    <div className=${'lt-msg' + (erro ? ' erro' : '')}>${msg}</div>
+    <button className="btn white lt-dig" onClick=${aoFechar}>Digitar</button></div>`;
+}
+// Pessoa: crachá ou digitado. valor = { nome, matricula, cargo, setor }
+function CampoPessoa({ valor, set, completo, rotulo }) {
+  const [ler, setLer] = useState(false); const v = valor || {};
+  const up = (k, x) => set(Object.assign({}, v, { [k]: k === 'matricula' ? x.toUpperCase() : x }));
+  const lido = (p) => { setLer(false); const ant = pessoaConhecida(p.matricula, p.nome); set(Object.assign({}, v, ant || {}, { nome: p.nome, matricula: p.matricula || (ant && ant.matricula) || '', cargo: p.cargo || (ant && ant.cargo) || '', via: 'cracha' })); toast('Crachá lido: ' + p.nome); };
+  const aoSairMat = () => { if (!v.matricula || v.nome) return; const ant = pessoaConhecida(v.matricula); if (ant) set(Object.assign({}, v, ant, { matricula: v.matricula })); };
+  return html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+    ${rotulo && html`<span className="lb" style=${{ fontSize: 14, fontWeight: 600 }}>${rotulo}</span>`}
+    <button className="btn sm" onClick=${() => setLer(true)}><${Ic} n="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2M18 14h2v2M14 18h2v2h4" s=${18} c="#AEC155" />Ler crachá</button>
+    ${v.via === 'cracha' && v.nome && html`<div className="note ok" style=${{ margin: 0 }}>Lido pelo crachá. Confira e complete se precisar.</div>`}
+    <div className=${completo ? 'grid2' : ''} style=${completo ? null : { display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 8 }}>
+      <label className="f" style=${completo ? { gridColumn: '1 / -1' } : null}><span className="lb">Nome</span><input className="inp" value=${v.nome || ''} onChange=${(e) => up('nome', e.target.value)} placeholder="Nome completo" autoCapitalize="characters" /></label>
+      <label className="f"><span className="lb">Matrícula</span><input className="inp" value=${v.matricula || ''} onChange=${(e) => up('matricula', e.target.value)} onBlur=${aoSairMat} inputMode="numeric" /></label>
+      ${completo && html`<label className="f"><span className="lb">Cargo / função</span><input className="inp" value=${v.cargo || ''} onChange=${(e) => up('cargo', e.target.value)} /></label>
+        <label className="f" style=${{ gridColumn: '1 / -1' }}><span className="lb">Setor</span><input className="inp" value=${v.setor || ''} onChange=${(e) => up('setor', e.target.value)} placeholder="Ex.: Produção" /></label>`}
+    </div>
+    ${ler && html`<${LeitorCracha} aoLer=${lido} aoFechar=${() => setLer(false)} />`}
+  </div>`;
+}
+// Completa com o que já se sabe da pessoa (cadastro de usuários ou termos anteriores)
+function pessoaConhecida(mat, nome) {
+  mat = String(mat || '').trim(); const nn = norm(nome || '');
+  const bate = (p) => p && ((mat && String(p.matricula || '').trim() === mat) || (!mat && nn && norm(p.nome) === nn));
+  const us = store.todos('usuarios').find(bate); if (us) return { nome: (us.nome || '').toUpperCase(), matricula: us.matricula || mat, cargo: (us.cargo || '').toUpperCase(), setor: us.setor || '' };
+  const r = store.todos('remessas').filter(x => x.termo && bate(x.termo.colaborador)).sort((a, b) => (b.termo.em || '').localeCompare(a.termo.em || ''))[0];
+  return r ? Object.assign({}, r.termo.colaborador) : null;
+}
+
+/* ---------- lista e cartões ---------- */
+function Etapas({ r }) {
+  const t = totaisTermo(r);
+  const etapas = [['Pedido', r.criadoEm], ['Separado', r.separadoEm], ['Retirado', r.retiradoEm], ['Devolvido', r.status === 'quitado' ? r.quitadoEm : null]];
+  return html`<div style=${{ display: 'flex', gap: 4 }}>${etapas.map(([l, d], i) => html`<span key=${l} style=${{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}><span style=${{ height: 5, borderRadius: 999, background: d ? 'var(--green)' : i === 3 && t.dev ? 'linear-gradient(90deg,var(--green) ' + Math.round(t.dev / t.ret * 100) + '%,var(--soft) 0)' : 'var(--soft)' }}></span><span className="t3">${l}${d && i < 3 ? ' ' + fmtHora(d) : ''}</span></span>`)}</div>`;
+}
+const ST_PED = { solicitado: ['Pedido', 'y'], separado: ['Separado', 'b'], retirado: ['Termo aberto', 'ok'], quitado: ['Termo quitado', 'g'], cancelado: ['Cancelado', 'g'] };
+function infoPedido(r) { return ST_PED[r.status] || remessaStatusInfo(r.status); }
+function itensTexto(r) { const q = (i) => r.termo ? null : i.enviado != null ? i.enviado : i.qtd; return r.termo ? r.termo.itens.map(i => nfmt(i.qtd) + ' × ' + descItem(i.key)).join(' · ') : r.itens.map(i => nfmt(q(i)) + ' × ' + descItem(i.key)).join(' · '); }
 function PedidoCard({ ctx, r }) {
-  const { usuario: u, ir } = ctx;
-  const [sl0, sc] = remessaStatusInfo(r.status); const sl = r.status === 'aguardando_recebimento' ? 'Entregue' : sl0;
-  const qtdIt = (i) => i.recebido != null ? i.recebido : i.enviado != null ? i.enviado : i.qtd;
-  const retirar = () => { despacharRemessa(r, u, 'em_transito'); toast('Retirada registrada. Leve até ' + r.destino + '.'); };
-  const entregar = () => { store.gravar('remessas', Object.assign({}, r, { status: 'aguardando_recebimento', entregueEm: agoraISO(), entreguePor: u.nome, historico: (r.historico || []).concat([{ st: 'aguardando_recebimento', em: agoraISO(), por: u.nome }]) })); toast('Entrega registrada. Falta a frente confirmar.'); };
+  const { usuario: u, ir } = ctx; const [sl, sc] = infoPedido(r); const t = totaisTermo(r);
   const cancelar = () => { if (!confirm('Cancelar o pedido ' + r.numero + '?')) return; store.gravar('remessas', Object.assign({}, r, { status: 'cancelado', canceladoEm: agoraISO(), canceladoPor: u.nome, historico: (r.historico || []).concat([{ st: 'cancelado', em: agoraISO(), por: u.nome }]) })); toast('Pedido cancelado.'); };
   const acoes = [];
-  if (r.status === 'solicitado' && pode(u, 'cd')) acoes.push(html`<button key="s" className="btn sm" style=${{ flex: 1 }} onClick=${() => ir('pedidos', 'separar', { id: r.id })}>Separar no CD</button>`);
-  if (r.status === 'separado' && pode(u, 'transporte')) acoes.push(html`<button key="r" className="btn sm" style=${{ flex: 1 }} onClick=${retirar}><${Ic} n="truck" s=${18} />Peguei no CD</button>`);
-  if (r.status === 'em_transito' && pode(u, 'transporte')) acoes.push(html`<button key="e" className="btn sm" style=${{ flex: 1 }} onClick=${entregar}>Entreguei na frente</button>`);
-  if (['em_transito', 'aguardando_recebimento'].includes(r.status) && pode(u, 'frente', r.destino)) acoes.push(html`<button key="c" className=${'btn sm' + (r.status === 'em_transito' && pode(u, 'transporte') ? ' white' : '')} style=${{ flex: 1 }} onClick=${() => ir('pedidos', 'receber', { id: r.id, volta: { aba: 'pedidos' } })}>Conferir e receber</button>`);
+  if (r.status === 'solicitado' && pode(u, 'separar')) acoes.push(html`<button key="s" className="btn sm" style=${{ flex: 1 }} onClick=${() => ir('pedidos', 'separar', { id: r.id })}>Separar no CD</button>`);
+  if (r.status === 'separado' && pode(u, 'retirar')) acoes.push(html`<button key="r" className="btn sm" style=${{ flex: 1 }} onClick=${() => ir('pedidos', 'retirada', { id: r.id })}>Registrar retirada e termo</button>`);
+  if (r.status === 'retirado' && pode(u, 'retirar')) acoes.push(html`<button key="d" className="btn sm" style=${{ flex: 1 }} onClick=${() => ir('pedidos', 'devolucao', { id: r.id })}><${Ic} n="ret" s=${18} />Registrar devolução</button>`);
+  if (r.termo) acoes.push(html`<button key="t" className="btn white sm" style=${{ flex: r.status === 'quitado' || !pode(u, 'retirar') ? 1 : 'none', padding: '0 14px' }} onClick=${() => ir('pedidos', 'termo', { id: r.id })}>Termo</button>`);
   return html`<div className="card pad" style=${{ gap: 10 }}>
-    <div style=${{ display: 'flex', alignItems: 'center', gap: 10 }}><span className="grow" style=${{ fontSize: 15, fontWeight: 700, minWidth: 0 }}>${r.destino}</span>${r.noPrazo === false && html`<span className="tag o">fora do prazo</span>`}<span className=${'tag ' + sc}>${sl}</span></div>
-    <span className="t2" style=${{ lineHeight: 1.45 }}>${r.itens.map(i => nfmt(qtdIt(i)) + ' × ' + descItem(i.key)).join(' · ')}</span>
+    <div style=${{ display: 'flex', alignItems: 'center', gap: 10 }}><span className="grow" style=${{ fontSize: 15, fontWeight: 700, minWidth: 0 }}>${r.destino}</span>${r.noPrazo === false && r.status === 'solicitado' && html`<span className="tag o">fora do prazo</span>`}<span className=${'tag ' + sc}>${sl}</span></div>
+    ${r.termo ? html`<span className="t1" style=${{ fontSize: 14 }}>Termo de ${r.termo.colaborador.nome}${r.termo.colaborador.matricula ? ' (' + r.termo.colaborador.matricula + ')' : ''}</span>` : null}
+    <span className="t2" style=${{ lineHeight: 1.45 }}>${itensTexto(r)}</span>
     ${r.obs && html`<span className="t3">Obs.: ${r.obs}</span>`}
+    ${r.termo && r.status === 'retirado' && html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 4 }}><div style=${{ display: 'flex', height: 6, borderRadius: 999, overflow: 'hidden', background: 'var(--soft)' }}><span style=${{ width: (t.ret ? t.dev / t.ret * 100 : 0) + '%', background: 'var(--ok)' }}></span></div><span className="t3">${nfmt(t.dev)} de ${nfmt(t.ret)} peças devolvidas · ${nfmt(t.falta)} com ele</span></div>`}
     ${r.status !== 'cancelado' && html`<${Etapas} r=${r} />`}
-    <span className="t3">${r.numero} · uso ${diaSemana(r.dataUso)} ${fmtDataCurta(r.dataUso)} · pedido por ${r.solicitante || '—'}</span>
+    <span className="t3">${r.numero} · uso ${diaSemana(r.dataUso)} ${fmtDataCurta(r.dataUso)} · pedido por ${r.solicitante || '—'}${r.registradoPor && r.registradoPor !== r.solicitante ? ' (registrado por ' + r.registradoPor + ')' : ''}</span>
+    ${r.termo && pode(u, 'retirar') && html`<${StatusDrive} r=${r} />`}
     ${acoes.length > 0 && html`<div style=${{ display: 'flex', gap: 8 }}>${acoes}</div>`}
-    ${r.status === 'solicitado' && (r.solicitante === u.nome || pode(u, 'config')) && html`<button className="link" style=${{ alignSelf: 'flex-start', color: 'var(--muted)', padding: '0 0 0 2px' }} onClick=${cancelar}>Cancelar pedido</button>`}
+    ${r.status === 'solicitado' && (r.solicitante === u.nome || r.criadoPorEmail === u.email || pode(u, 'separar')) && html`<button className="link" style=${{ alignSelf: 'flex-start', color: 'var(--muted)', padding: '0 0 0 2px' }} onClick=${cancelar}>Cancelar pedido</button>`}
   </div>`;
+}
+function StatusDrive({ r }) {
+  if (!r.drive || !driveConfigurado()) return null;
+  const ok = r.drive.ok && r.drive.versao === versaoTermo(r);
+  return html`<span className="t3" style=${{ display: 'flex', alignItems: 'center', gap: 6 }}><span className="dot" style=${{ background: ok ? 'var(--ok)' : 'var(--yellow, #B8962E)' }}></span>${ok ? 'Termos salvos no Drive' : r.drive.erro ? 'Drive: ' + r.drive.erro : 'Termos aguardando envio ao Drive'}</span>`;
 }
 function TelaPedidos({ ctx }) {
   const { usuario: u, ir } = ctx; useStore();
-  const H = hoje(), A = addDias(H, 1);
-  const [soMinha, setSoMinha] = useState(!!u.local);
-  const [antigos, setAntigos] = useState(false);
-  const todos = store.todos('remessas').filter(r => r.tipo === 'pedido' && (!soMinha || !u.local || r.destino === u.local)).sort((a, b) => (a.dataUso || '').localeCompare(b.dataUso || '') || (a.criadoEm || '').localeCompare(b.criadoEm || ''));
-  const ativo = (r) => !['recebido', 'cancelado'].includes(r.status);
-  const amanha = todos.filter(r => r.dataUso === A && r.status !== 'cancelado');
-  const hojeAbertos = todos.filter(r => r.dataUso <= H && ativo(r));
-  const proximos = todos.filter(r => r.dataUso > A && ativo(r));
-  const entreguesHoje = todos.filter(r => r.status === 'recebido' && r.recebidoEm && dataLocal(new Date(r.recebidoEm)) === H);
-  const anteriores = todos.filter(r => !ativo(r) && !entreguesHoje.includes(r) && r.dataUso !== A).reverse().slice(0, 20);
+  const resp = pode(u, 'separar') || pode(u, 'retirar');
+  const todos = store.todos('remessas').filter(r => r.tipo === 'pedido').sort((a, b) => (a.dataUso || '').localeCompare(b.dataUso || '') || (a.criadoEm || '').localeCompare(b.criadoEm || ''));
   const noPrazo = new Date().getHours() < HORA_LIMITE_PEDIDO;
-  return html`<${Tela} ctx=${ctx} eyebrow="Controle de peças" titulo="Pedidos">
-    ${pode(u, 'pedir') && html`<button className="btn big" onClick=${() => ir('pedidos', 'novo')}>
+  const botao = pode(u, 'pedir') && html`<button className="btn big" onClick=${() => ir('pedidos', 'novo')}>
       <span className="ico"><${Ic} n="plus" s=${22} w=${2.4} /></span>
-      <span style=${{ display: 'flex', flexDirection: 'column', flex: 1 }}><span style=${{ fontSize: 16 }}>Novo pedido para amanhã</span><span style=${{ fontSize: 12, fontWeight: 500, color: 'var(--green-t)' }}>${noPrazo ? 'Até ' + HORA_LIMITE_PEDIDO + 'h para o CD separar hoje' : 'Passou das ' + HORA_LIMITE_PEDIDO + 'h · o pedido fica fora do prazo'}</span></span></button>`}
-    ${u.local && html`<div className="chips"><button className=${'chip' + (soMinha ? ' on' : '')} onClick=${() => setSoMinha(true)}>${u.local}</button><button className=${'chip' + (!soMinha ? ' on' : '')} onClick=${() => setSoMinha(false)}>Todas as frentes</button></div>`}
-    ${hojeAbertos.length > 0 && html`<div className="sec">Para hoje · em andamento</div>${hojeAbertos.map(r => html`<${PedidoCard} key=${r.id} ctx=${ctx} r=${r} />`)}`}
-    <div className="sec">Para amanhã · ${diaSemana(A)} ${fmtDataCurta(A)}</div>
-    ${amanha.length ? amanha.map(r => html`<${PedidoCard} key=${r.id} ctx=${ctx} r=${r} />`) : html`<div className="card"><${Vazio}>Nenhum pedido para amanhã ainda.</${Vazio}></div>`}
-    ${proximos.length > 0 && html`<div className="sec">Próximos dias</div>${proximos.map(r => html`<${PedidoCard} key=${r.id} ctx=${ctx} r=${r} />`)}`}
-    <div className="sec">Entregues hoje</div>
-    <div className="card">${entreguesHoje.length ? entreguesHoje.map(r => html`<div key=${r.id} className="row"><span className="dot" style=${{ background: 'var(--ok)' }}></span><span className="grow"><div className="t1">${r.destino}</div><div className="t2">${r.numero} · ${nfmt(r.itens.reduce((t, i) => t + (i.recebido || 0), 0))} peças · recebido ${fmtHora(r.recebidoEm)}</div></span></div>`) : html`<${Vazio}>Nenhuma entrega confirmada hoje.</${Vazio}>`}</div>
-    ${anteriores.length > 0 && html`<button className="link" style=${{ alignSelf: 'center' }} onClick=${() => setAntigos(!antigos)}>${antigos ? 'Esconder anteriores' : 'Ver pedidos anteriores (' + anteriores.length + ')'}</button>
-      ${antigos && html`<div className="card">${anteriores.map(r => { const [sl, sc] = remessaStatusInfo(r.status); return html`<div key=${r.id} className="row"><span className="grow"><div className="t1">${r.destino} · ${fmtDataCurta(r.dataUso)}</div><div className="t2">${r.numero} · ${plural(r.itens.length, 'tipo')}</div></span><span className=${'tag ' + sc}>${sl}</span></div>`; })}</div>`}`}
+      <span style=${{ display: 'flex', flexDirection: 'column', flex: 1 }}><span style=${{ fontSize: 16 }}>Pedir peças para separar</span><span style=${{ fontSize: 12, fontWeight: 500, color: 'var(--green-t)' }}>${pode(u, 'pedirOutro') ? 'Em nome de quem pediu · ' : 'Sai no seu nome · '}${noPrazo ? 'até ' + HORA_LIMITE_PEDIDO + 'h para amanhã' : 'depois das ' + HORA_LIMITE_PEDIDO + 'h fica fora do prazo'}</span></span></button>`;
+  if (!resp) {
+    const meus = todos.filter(r => r.criadoPorEmail ? r.criadoPorEmail === u.email : r.solicitante === u.nome).reverse();
+    const abertos = meus.filter(r => ['solicitado', 'separado', 'retirado'].includes(r.status)); const fechados = meus.filter(r => !abertos.includes(r)).slice(0, 15);
+    return html`<${Tela} ctx=${ctx} eyebrow=${'Usuário · ' + u.nome} titulo="Pedidos">
+      ${botao}
+      <div className="sec">Meus pedidos</div>
+      ${abertos.length ? abertos.map(r => html`<${PedidoCard} key=${r.id} ctx=${ctx} r=${r} />`) : html`<div className="card"><${Vazio}>Nenhum pedido em andamento.</${Vazio}></div>`}
+      ${fechados.length > 0 && html`<div className="sec">Anteriores</div><div className="card">${fechados.map(r => { const [sl, sc] = infoPedido(r); return html`<div key=${r.id} className="row"><span className="grow"><div className="t1">${r.destino} · ${fmtDataCurta(r.dataUso)}</div><div className="t2">${r.numero} · ${plural(r.itens.length, 'tipo')}</div></span><span className=${'tag ' + sc}>${sl}</span></div>`; })}</div>`}
+      <div className="hint">A retirada e o termo são feitos no celular do almoxarifado. Aqui você acompanha cada etapa.</div>
+    </${Tela}>`;
+  }
+  const grupos = [
+    { id: 'solicitado', nome: 'A separar', lista: todos.filter(r => r.status === 'solicitado') },
+    { id: 'separado', nome: 'Retirar', lista: todos.filter(r => r.status === 'separado') },
+    { id: 'retirado', nome: 'Com termo', lista: todos.filter(r => r.status === 'retirado').reverse() },
+    { id: 'quitado', nome: 'Quitados', lista: todos.filter(r => r.status === 'quitado' || r.status === 'cancelado' || ehLegado(r)).reverse().slice(0, 30) }
+  ];
+  const [g, setG] = useState(() => { try { const s = sessionStorage.getItem('ccg_ped_g'); if (s) return s; } catch (e) {} return (grupos.find(x => x.lista.length && x.id !== 'quitado') || grupos[0]).id; });
+  const escolher = (id) => { setG(id); try { sessionStorage.setItem('ccg_ped_g', id); } catch (e) {} };
+  const ativo = grupos.find(x => x.id === g) || grupos[0];
+  const [busca, setBusca] = useState('');
+  const lista = ativo.lista.filter(r => !busca || norm([r.destino, r.numero, r.solicitante, r.termo && r.termo.colaborador.nome, r.termo && r.termo.colaborador.matricula].join(' ')).includes(norm(busca)));
+  return html`<${Tela} ctx=${ctx} eyebrow=${'Responsável · ' + u.nome} titulo="Pedidos">
+    ${botao}
+    <div className="seg" role="tablist">${grupos.map(x => html`<button key=${x.id} role="tab" aria-selected=${x.id === ativo.id} className=${x.id === ativo.id ? 'on' : ''} onClick=${() => escolher(x.id)}><b>${x.id === 'quitado' ? '' : x.lista.length}</b>${x.nome}</button>`)}</div>
+    ${ativo.id !== 'solicitado' && ativo.id !== 'separado' && html`<label className="search"><${Ic} n="search" s=${20} /><input value=${busca} onChange=${(e) => setBusca(e.target.value)} placeholder="Frente, pedido ou colaborador" /></label>`}
+    ${lista.length ? lista.map(r => ehLegado(r) ? html`<${PedidoLegado} key=${r.id} r=${r} />` : html`<${PedidoCard} key=${r.id} ctx=${ctx} r=${r} />`) : html`<div className="card"><${Vazio}>${({ solicitado: 'Nenhum pedido esperando separação.', separado: 'Nada separado esperando retirada.', retirado: 'Nenhum termo aberto.', quitado: 'Nada por aqui ainda.' })[ativo.id]}</${Vazio}></div>`}
   </${Tela}>`;
 }
+function PedidoLegado({ r }) { // pedidos do fluxo antigo (antes do termo)
+  const [sl, sc] = remessaStatusInfo(r.status);
+  return html`<div className="card pad" style=${{ gap: 6 }}><div style=${{ display: 'flex', gap: 10, alignItems: 'center' }}><span className="grow t1">${r.destino} · ${fmtDataCurta(r.dataUso)}</span><span className=${'tag ' + sc}>${sl}</span></div><span className="t2">${r.numero} · ${itensTexto(r)}</span><span className="t3">Fluxo anterior, sem termo.</span></div>`;
+}
+
+/* ---------- novo pedido ---------- */
 function NovoPedido({ ctx }) {
   const { usuario: u, ir } = ctx; useStore();
+  const outro = pode(u, 'pedirOutro');
+  const [quem, setQuem] = useState(outro ? {} : { nome: u.nome, matricula: u.matricula || '' });
   const [destino, setDestino] = useState(u.local || ''); const [dataUso, setDataUso] = useState(addDias(hoje(), 1));
   const [itens, setItens] = useState({}); const [obs, setObs] = useState(''); const [pick, setPick] = useState(false); const [proj, setProj] = useState(false);
   const cd = saldoLugar('CD');
@@ -2086,19 +2237,25 @@ function NovoPedido({ ctx }) {
   const noPrazo = dataUso > addDias(hoje(), 1) || (dataUso === addDias(hoje(), 1) && new Date().getHours() < HORA_LIMITE_PEDIDO);
   const enviar = () => {
     const lista = Object.keys(itens).filter(k => Number(itens[k]) > 0).map(k => ({ key: k, qtd: Number(itens[k]) }));
+    if (!(quem.nome || '').trim()) return toast('Diga quem pediu (crachá ou digitado).');
     if (!destino || !lista.length) return toast('Escolha a frente e pelo menos uma peça.');
-    store.gravar('remessas', { id: uid('rm'), numero: proximoNumero('PD'), tipo: 'pedido', origem: 'CD', destino, dataUso, itens: lista, status: 'solicitado', solicitante: u.nome, obs, criadoEm: agoraISO(), noPrazo, historico: [{ st: 'solicitado', em: agoraISO(), por: u.nome }] });
+    registrarLocal(destino);
+    store.gravar('remessas', { id: uid('rm'), numero: proximoNumero('PD'), tipo: 'pedido', origem: 'CD', destino, dataUso, itens: lista, status: 'solicitado',
+      solicitante: quem.nome.trim(), solicitanteMat: (quem.matricula || '').trim(), solicitanteCargo: quem.cargo || '', registradoPor: u.nome, criadoPorEmail: outro ? '' : (u.email || ''),
+      obs, criadoEm: agoraISO(), noPrazo, historico: [{ st: 'solicitado', em: agoraISO(), por: u.nome }] });
     toast('Pedido enviado ao CD.'); ir('pedidos');
   };
-  return html`<${Tela} ctx=${ctx} eyebrow=${'Uso ' + diaSemana(dataUso) + ' ' + fmtDataCurta(dataUso)} titulo="Novo pedido" voltar=${() => ir('pedidos')}>
+  return html`<${Tela} ctx=${ctx} eyebrow="Pedir para separar" titulo="Novo pedido" voltar=${() => ir('pedidos')}>
     ${!noPrazo && html`<div className="note o">Depois das ${HORA_LIMITE_PEDIDO}h o pedido para amanhã fica "fora do prazo" e pode atrasar.</div>`}
+    ${outro ? html`<div className="card pad"><${CampoPessoa} rotulo="Quem pediu" valor=${quem} set=${setQuem} /></div>`
+      : html`<div className="card pad" style=${{ gap: 4 }}><span className="lb">Quem pediu</span><span className="t1">${u.nome}${u.matricula ? ' · mat. ' + u.matricula : ''}</span></div>`}
     <div className="card pad">
-      <label className="f"><span className="lb">Frente</span><${SelLocal} valor=${destino} set=${setDestino} /></label>
+      <div className="f"><span className="lb">Frente</span><${CampoLocal} valor=${destino} set=${setDestino} /></div>
       <label className="f"><span className="lb">Data de uso</span><input className="inp" type="date" value=${dataUso} min=${hoje()} onChange=${(e) => setDataUso(e.target.value)} /></label></div>
     <div style=${{ display: 'flex', gap: 8 }}><button className="btn white sm" style=${{ flex: 1 }} onClick=${() => setPick(true)}><${Ic} n="plus" s=${18} />Adicionar peça</button><button className="btn white sm" style=${{ flex: 1 }} disabled=${!destino} onClick=${() => setProj(true)}><${Ic} n="map" s=${18} />Pelo projeto</button></div>
     <div className="card">${Object.keys(itens).length ? Object.keys(itens).map(k => html`<div key=${k} className="row"><div className="grow"><div className="t1">${descItem(k)}</div><div className="t2">No CD: ${cd[k] || 0} · baia ${catalogoItem(k).baia || '—'}</div>${(Number(itens[k]) || 0) > (cd[k] || 0) && html`<div className="t2" style=${{ color: 'var(--mag-t)', fontWeight: 600 }}>Mais do que tem no CD</div>`}</div><${Stepper} valor=${itens[k]} set=${(v) => setItens(Object.assign({}, itens, { [k]: v }))} /></div>`) : html`<${Vazio}>Adicione as peças que vai usar.</${Vazio}>`}</div>
     <label className="f"><span className="lb">Observação</span><input className="inp" value=${obs} onChange=${(e) => setObs(e.target.value)} placeholder="Ex.: montagem do trecho entre eixos 2 e 3" /></label>
-    <${Rodape}><button className="btn block" disabled=${!total || !destino} onClick=${enviar}>Enviar ao CD · ${total} peças</button></${Rodape}>
+    <${Rodape}><button className="btn block" disabled=${!total || !destino} onClick=${enviar}>Pedir para separar · ${total} peças</button></${Rodape}>
     ${pick && html`<${EscolherPeca} disponivel=${cd} aoFechar=${() => setPick(false)} aoEscolher=${(k) => { setItens(Object.assign({}, itens, { [k]: itens[k] || 1 })); setPick(false); }} />`}
     ${proj && html`<${PedidoPeloProjeto} local=${destino} aoFechar=${() => setProj(false)} aoAdicionar=${(add) => { const o = Object.assign({}, itens); Object.keys(add).forEach(k => o[k] = (Number(o[k]) || 0) + add[k]); setItens(o); setProj(false); }} />`}
   </${Tela}>`;
@@ -2115,20 +2272,23 @@ function PedidoPeloProjeto({ local, aoFechar, aoAdicionar }) {
       <div>${pts.length ? pts.map(x => html`<label key=${x.id} className="row" style=${{ padding: '12px 0', cursor: 'pointer' }}><input type="checkbox" checked=${!!sel[x.id]} onChange=${() => setSel(Object.assign({}, sel, { [x.id]: !sel[x.id] }))} style=${{ width: 22, height: 22, accentColor: '#13152B' }} /><div className="grow"><div className="t1">${x.rotulo}</div><div className="t2">${descItem(x.key)} · ${x.qtd} pç</div></div></label>`) : html`<${Vazio}>Todos os pontos já estão montados.</${Vazio}>`}</div>` : html`<${Vazio}>Nenhum projeto com pontos marcados para ${local}.</${Vazio}>`}
   </${Sheet}>`;
 }
+
+/* ---------- separar ---------- */
 function SepararPedido({ ctx }) {
-  const { usuario: u, ir, nav } = ctx; useStore();
-  const rem = store.pegar('remessas', nav.p.id); const cd = saldoLugar('CD'); const snf = saldosNF();
+  const { usuario: u, ir } = ctx; useStore();
+  const rem = store.pegar('remessas', ctx.nav.p.id); const cd = saldoLugar('CD'); const snf = saldosNF();
   const [sep, setSep] = useState(() => { const o = {}; (rem ? rem.itens : []).forEach(i => o[i.key] = Math.min(i.qtd, Math.max(0, cd[i.key] || 0))); return o; });
   const [ok, setOk] = useState({});
-  if (!rem) return html`<${Tela} ctx=${ctx} titulo="Separar" voltar=${() => ir('pedidos')}><${Vazio}>Pedido não encontrado.</${Vazio}></${Tela}>`;
-  const deQualNota = (k, q) => { const o = snf['CD|' + k] || {}; let resta = Number(q) || 0; const out = []; Object.keys(o).filter(nf => o[nf] > 0).sort(_ordNF(ordemNotas())).forEach(nf => { if (resta <= 0) return; const x = Math.min(resta, o[nf]); resta -= x; const n = store.pegar('notas', nf); out.push((n ? 'NF ' + n.numero : 'sem nota') + ': ' + x); }); return out.join(' · '); };
+  if (!rem || rem.status !== 'solicitado') return html`<${Tela} ctx=${ctx} titulo="Separar" voltar=${() => ir('pedidos')}><${Vazio}>${rem ? 'Este pedido já foi separado.' : 'Pedido não encontrado.'}</${Vazio}></${Tela}>`;
+  const deQualNota = (k, q) => { const o = snf['CD|' + k] || {}; let resta = Number(q) || 0; const out = []; Object.keys(o).filter(nf => o[nf] > 0).sort(_ordNF(ordemNotas())).forEach(nf => { if (resta <= 0) return; const x = Math.min(resta, o[nf]); resta -= x; out.push(nomeNF(nf) + ': ' + x); }); return out.join(' · '); };
   const pronto = () => {
     const itens = rem.itens.map(i => Object.assign({}, i, { enviado: Number(sep[i.key]) || 0 }));
+    if (!itens.some(i => i.enviado > 0)) return toast('Nada separado. Ajuste as quantidades.');
     store.gravar('remessas', Object.assign({}, rem, { itens, status: 'separado', separadoEm: agoraISO(), separadoPor: u.nome, historico: (rem.historico || []).concat([{ st: 'separado', em: agoraISO(), por: u.nome }]) }));
-    toast('Pedido separado. Quem busca já vê no app.'); ir('pedidos');
+    toast('Pedido separado. Fica pronto para a retirada.'); ir('pedidos');
   };
   return html`<${Tela} ctx=${ctx} eyebrow=${'Separar · ' + rem.numero} titulo=${rem.destino} voltar=${() => ir('pedidos')}>
-    <div className="card pad" style=${{ gap: 4 }}><div className="t1">Uso ${diaSemana(rem.dataUso)} ${fmtData(rem.dataUso)} · pedido de ${rem.solicitante}</div>${rem.obs && html`<div className="t2">Obs.: ${rem.obs}</div>`}</div>
+    <div className="card pad" style=${{ gap: 4 }}><div className="t1">Uso ${diaSemana(rem.dataUso)} ${fmtData(rem.dataUso)} · pedido por ${rem.solicitante}</div>${rem.obs && html`<div className="t2">Obs.: ${rem.obs}</div>`}</div>
     <div className="card">${rem.itens.map(i => { const c = catalogoItem(i.key); const disp = cd[i.key] || 0; return html`<div key=${i.key} className="row" style=${{ flexWrap: 'wrap' }}>
       <button aria-label="Marcar separado" onClick=${() => setOk(Object.assign({}, ok, { [i.key]: !ok[i.key] }))} style=${{ width: 32, height: 32, borderRadius: 10, border: 'none', background: ok[i.key] ? 'var(--green)' : 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}>${ok[i.key] && html`<${Ic} n="check" s=${18} w=${3} />`}</button>
       <div className="grow"><div className="t1">${c.desc}</div><div className="t2">Baia ${c.baia || '—'} · pedido ${i.qtd} · no CD ${disp}</div><div className="t3">${deQualNota(i.key, sep[i.key])}</div></div>
@@ -2137,6 +2297,235 @@ function SepararPedido({ ctx }) {
     <div className="hint">O app tira das notas mais antigas primeiro, para devolver as notas por completo.</div>
     <${Rodape}><button className="btn block" onClick=${pronto}>Pedido pronto para retirada</button></${Rodape}>
   </${Tela}>`;
+}
+
+/* ---------- retirada com termo ---------- */
+function TelaRetirada({ ctx }) {
+  const { usuario: u, ir } = ctx; useStore();
+  const rem = store.pegar('remessas', ctx.nav.p.id); const cd = saldoLugar('CD');
+  const [col, setCol] = useState({});
+  const [respSetor, setRespSetor] = useState(rem ? rem.solicitante || '' : ''); const [obra, setObra] = useState(OBRA_TERMO);
+  const [qt, setQt] = useState(() => { const o = {}; (rem ? rem.itens : []).forEach(i => o[i.key] = i.enviado != null ? i.enviado : i.qtd); return o; });
+  const [rub, setRub] = useState(null); const [assC, setAssC] = useState(null); const [assR, setAssR] = useState(null);
+  const [respNome, setRespNome] = useState(u.nome); const [feito, setFeito] = useState(null);
+  if (feito) return html`<${Tela} ctx=${ctx} eyebrow=${'Retirada · ' + feito.numero} titulo="Termos gerados" voltar=${() => ir('pedidos')}><${TermosProntos} r=${feito} retirada=${true} /></${Tela}>`;
+  if (!rem || rem.status !== 'separado') return html`<${Tela} ctx=${ctx} titulo="Retirada" voltar=${() => ir('pedidos')}><${Vazio}>${rem ? 'Este pedido não está pronto para retirada.' : 'Pedido não encontrado.'}</${Vazio}></${Tela}>`;
+  const total = Object.values(qt).reduce((a, b) => a + (Number(b) || 0), 0);
+  const confirmar = () => {
+    if (!(col.nome || '').trim()) return toast('Falta o nome de quem está retirando.');
+    if (!(col.matricula || '').trim() && !confirm('Retirar sem matrícula?')) return;
+    if (!total) return toast('Nenhuma peça na retirada.');
+    if (!rub) return toast('Falta a rubrica do colaborador.');
+    if (!assC) return toast('Falta a assinatura do colaborador.');
+    if (!assR) return toast('Falta a assinatura do responsável pelo termo.');
+    const ops = []; const itensT = [];
+    rem.itens.forEach(i => { const q = Math.min(Number(qt[i.key]) || 0, Math.max(0, cd[i.key] || 0)) || 0; if (q <= 0) return;
+      const mv = movFIFO('retirada', i.key, q, 'CD', 'F:' + rem.destino, rem.id, respNome); const nfs = {}; mv.forEach(o => { nfs[o.doc.nf] = (nfs[o.doc.nf] || 0) + o.doc.qtd; ops.push(o); });
+      itensT.push({ key: i.key, qtd: q, nfs }); });
+    if (!itensT.length) return toast('Essas peças não estão mais no CD.');
+    const em = agoraISO();
+    const termo = { colaborador: { nome: col.nome.trim().toUpperCase(), matricula: (col.matricula || '').trim(), cargo: (col.cargo || '').trim().toUpperCase(), setor: (col.setor || '').trim() }, via: col.via || 'digitado',
+      responsavelSetor: respSetor.trim(), obra: obra.trim() || OBRA_TERMO, em, rubrica: rub, assColab: assC, respNome: respNome.trim() || u.nome, respMat: u.matricula || '', assResp: assR, itens: itensT };
+    const r = Object.assign({}, rem, { itens: rem.itens.map(i => Object.assign({}, i, { enviado: (itensT.find(x => x.key === i.key) || {}).qtd || 0 })), status: 'retirado', retiradoEm: em, retiradoPor: termo.colaborador.nome, termo, devolucoes: [],
+      drive: { ok: false }, historico: (rem.historico || []).concat([{ st: 'retirado', em, por: respNome }]) });
+    ops.push({ c: 'remessas', doc: r }); store.gravarVarios(ops);
+    enviarTermosDrive(r).catch(() => {});
+    setFeito(r);
+  };
+  return html`<${Tela} ctx=${ctx} eyebrow=${'Retirada · ' + rem.numero} titulo=${rem.destino} voltar=${() => ir('pedidos')}>
+    <div className="card pad"><b>1 · Quem está retirando</b>
+      <${CampoPessoa} valor=${col} set=${setCol} completo=${true} />
+      <div className="grid2"><label className="f"><span className="lb">Responsável do setor</span><input className="inp" value=${respSetor} onChange=${(e) => setRespSetor(e.target.value)} /></label>
+        <label className="f"><span className="lb">Obra</span><input className="inp" value=${obra} onChange=${(e) => setObra(e.target.value)} /></label></div>
+      <div className="hint" style=${{ padding: 0 }}>Nº do patrimônio fica em branco. Data da retirada: hoje, ${fmtData(hoje())}.</div></div>
+    <div className="card pad"><b>2 · Peças retiradas</b>
+      <div>${rem.itens.map(i => html`<div key=${i.key} className="row" style=${{ padding: '10px 0' }}><div className="grow"><div className="t1">${descItem(i.key)}</div><div className="t2">Separado ${i.enviado != null ? i.enviado : i.qtd} · no CD ${cd[i.key] || 0}</div></div><${Stepper} valor=${qt[i.key]} max=${cd[i.key] || 0} set=${(v) => setQt(Object.assign({}, qt, { [i.key]: v }))} /></div>`)}</div></div>
+    <div className="card pad"><b>3 · Rubrica e assinaturas</b>
+      <${Assinatura} rotulo="Rubrica (visto) do colaborador" valor=${rub} set=${setRub} h=${110} />
+      <${Assinatura} rotulo=${'Assinatura do colaborador' + (col.nome ? ' · ' + col.nome : '')} valor=${assC} set=${setAssC} />
+      <label className="f"><span className="lb">Responsável pelo termo</span><input className="inp" value=${respNome} onChange=${(e) => setRespNome(e.target.value)} /></label>
+      <${Assinatura} rotulo="Assinatura do responsável pelo termo" valor=${assR} set=${setAssR} />
+      <div className="hint" style=${{ padding: 0 }}>A rubrica vai em cada linha como "visto do integrante". Não há assinatura do almoxarifado na retirada.</div></div>
+    <${Rodape}><button className="btn block" onClick=${confirmar}>Confirmar retirada · ${total} pç</button></${Rodape}>
+  </${Tela}>`;
+}
+
+/* ---------- devolução por partes ---------- */
+function TelaDevolucao({ ctx }) {
+  const { usuario: u, ir } = ctx; useStore();
+  const rem = store.pegar('remessas', ctx.nav.p.id);
+  const [qt, setQt] = useState({}); const [visto, setVisto] = useState(null); const [quem, setQuem] = useState(u.nome); const [feito, setFeito] = useState(null);
+  if (feito) return html`<${Tela} ctx=${ctx} eyebrow=${'Devolução · ' + feito.numero} titulo="Termo atualizado" voltar=${() => ir('pedidos')}><${TermosProntos} r=${feito} /></${Tela}>`;
+  if (!rem || !rem.termo || rem.status !== 'retirado') return html`<${Tela} ctx=${ctx} titulo="Devolução" voltar=${() => ir('pedidos')}><${Vazio}>${rem && rem.status === 'quitado' ? 'Este termo já foi quitado.' : 'Termo não encontrado.'}</${Vazio}></${Tela}>`;
+  const dv = devolvidoTermo(rem); const t = totaisTermo(rem); const n = (rem.devolucoes || []).length + 1;
+  const comEle = (i) => Math.max(0, i.qtd - (dv[i.key] || 0));
+  const total = rem.termo.itens.reduce((a, i) => a + Math.min(Number(qt[i.key]) || 0, comEle(i)), 0);
+  const tudo = () => { const o = {}; rem.termo.itens.forEach(i => o[i.key] = comEle(i)); setQt(o); };
+  const confirmar = () => {
+    if (!total) return toast('Diga quantas peças estão voltando.');
+    if (!visto) return toast('Falta o visto do almoxarifado.');
+    const ops = []; const itens = {}; const em = agoraISO();
+    rem.termo.itens.forEach(i => { const q = Math.min(Number(qt[i.key]) || 0, comEle(i)); if (q <= 0) return; itens[i.key] = q;
+      // volta para o CD respeitando as notas da retirada
+      const jaNF = {}; let jaVoltou = dv[i.key] || 0; Object.keys(i.nfs || {}).forEach(nf => { const x = Math.min(jaVoltou, i.nfs[nf]); jaNF[nf] = x; jaVoltou -= x; });
+      let resta = q; Object.keys(i.nfs || {}).forEach(nf => { if (resta <= 0) return; const livre = i.nfs[nf] - (jaNF[nf] || 0); const x = Math.min(resta, livre); if (x > 0) { ops.push(movimento('devolucao', i.key, x, 'F:' + rem.destino, 'CD', rem.id, quem, { nf })); resta -= x; } });
+      if (resta > 0) movFIFO('devolucao', i.key, resta, 'F:' + rem.destino, 'CD', rem.id, quem).forEach(o => ops.push(o)); });
+    const devolucoes = (rem.devolucoes || []).concat([{ n, em, por: quem.trim() || u.nome, visto, itens }]);
+    const quitado = rem.termo.itens.every(i => (dv[i.key] || 0) + (itens[i.key] || 0) >= i.qtd);
+    const r = Object.assign({}, rem, { devolucoes, status: quitado ? 'quitado' : 'retirado', quitadoEm: quitado ? em : null, drive: Object.assign({}, rem.drive || {}, { ok: false }),
+      historico: (rem.historico || []).concat([{ st: quitado ? 'quitado' : 'devolucao', em, por: quem }]) });
+    ops.push({ c: 'remessas', doc: r }); store.gravarVarios(ops);
+    enviarTermosDrive(r).catch(() => {});
+    toast(quitado ? 'Tudo devolvido. Termo quitado.' : 'Devolução registrada.'); setFeito(r);
+  };
+  const c = rem.termo.colaborador;
+  return html`<${Tela} ctx=${ctx} eyebrow=${'Devolução ' + n + ' · ' + rem.numero} titulo=${rem.destino} voltar=${() => ir('pedidos')}>
+    <div className="card pad" style=${{ gap: 8 }}>
+      <div style=${{ display: 'flex', alignItems: 'center', gap: 10 }}><span className="grow"><div className="t1" style=${{ fontSize: 16 }}>Termo de ${c.nome}${c.matricula ? ' · ' + c.matricula : ''}</div><div className="t2">Retirado ${fmtData(dataLocal(new Date(rem.termo.em)))} ${fmtHora(rem.termo.em)}</div></span><span className="tag y">Aberto</span></div>
+      <div style=${{ display: 'flex', height: 8, borderRadius: 999, overflow: 'hidden', background: 'var(--soft)' }}><span style=${{ width: (t.dev / t.ret * 100) + '%', background: 'var(--ok)' }}></span></div>
+      <span className="t2"><b style=${{ color: 'var(--navy)' }}>${nfmt(t.dev)} de ${nfmt(t.ret)}</b> peças devolvidas${rem.devolucoes && rem.devolucoes.length ? ' · ' + plural(rem.devolucoes.length, 'devolução', 'devoluções') : ''}</span></div>
+    <div style=${{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', padding: '0 4px' }}><div className="sec" style=${{ padding: 0 }}>O que está voltando agora</div><button className="link" style=${{ padding: 0 }} onClick=${tudo}>Voltou tudo</button></div>
+    <div className="card">${rem.termo.itens.map(i => html`<div key=${i.key} className="row"><div className="grow"><div className="t1">${descItem(i.key)}</div><div className="t2">retiradas ${i.qtd} · já voltaram ${dv[i.key] || 0} · com ele ${comEle(i)}</div></div>${comEle(i) > 0 ? html`<${Stepper} valor=${qt[i.key] || 0} max=${comEle(i)} set=${(v) => setQt(Object.assign({}, qt, { [i.key]: v }))} />` : html`<span className="tag ok">devolvida</span>`}</div>`)}</div>
+    <div className="card pad">
+      <label className="f"><span className="lb">Quem recebe (almoxarifado)</span><input className="inp" value=${quem} onChange=${(e) => setQuem(e.target.value)} /></label>
+      <${Assinatura} rotulo="Visto do almoxarifado" valor=${visto} set=${setVisto} h=${110} />
+      <div className="hint" style=${{ padding: 0 }}>O termo é refeito com a data da devolução e o visto nas linhas devolvidas. Quando voltar tudo, ele fica quitado.</div></div>
+    <${Rodape}><button className="btn block" onClick=${confirmar}>Registrar devolução · ${total} pç</button></${Rodape}>
+  </${Tela}>`;
+}
+
+/* ---------- ver termo e compartilhar ---------- */
+function TelaTermo({ ctx }) {
+  const { ir } = ctx; useStore(); const r = store.pegar('remessas', ctx.nav.p.id);
+  if (!r || !r.termo) return html`<${Tela} ctx=${ctx} titulo="Termo" voltar=${() => ir('pedidos')}><${Vazio}>Termo não encontrado.</${Vazio}></${Tela}>`;
+  const t = totaisTermo(r);
+  return html`<${Tela} ctx=${ctx} eyebrow=${'Termo · ' + r.numero} titulo=${r.termo.colaborador.nome} voltar=${() => ir('pedidos')}>
+    <div className="card pad" style=${{ gap: 6 }}><div className="t1">${r.destino}</div><div className="t2">Retirado ${fmtData(dataLocal(new Date(r.termo.em)))} ${fmtHora(r.termo.em)} · responsável ${r.termo.respNome}</div><div className="t2">${nfmt(t.dev)} de ${nfmt(t.ret)} peças devolvidas · ${r.status === 'quitado' ? 'termo quitado' : 'termo aberto'}</div></div>
+    ${(r.devolucoes || []).length > 0 && html`<div className="card">${r.devolucoes.map(d => html`<div key=${d.n} className="row"><span className="grow"><div className="t1">Devolução ${d.n} · ${fmtData(dataLocal(new Date(d.em)))} ${fmtHora(d.em)}</div><div className="t2">${Object.keys(d.itens).map(k => d.itens[k] + ' × ' + descItem(k)).join(' · ')} · recebido por ${d.por}</div></span></div>`)}</div>`}
+    <${TermosProntos} r=${r} />
+  </${Tela}>`;
+}
+function TermosProntos({ r, retirada }) {
+  const [ocup, setOcup] = useState(''); const [prev, setPrev] = useState(null); useStore();
+  const atual = store.pegar('remessas', r.id) || r;
+  useEffect(() => { let vivo = true; fotografar(paginasTermo(r, 'colab')[0], 794).then(c => { if (vivo) setPrev(c.toDataURL('image/jpeg', 0.8)); }).catch(() => {}); return () => { vivo = false; }; }, []);
+  const fazer = async (via) => {
+    setOcup(via);
+    try { const b = await gerarPDFTermo(r, via, (m) => setOcup(m)); const res = await compartilharArquivo(b, nomeArquivoTermo(r, via), 'Termo ' + r.numero); if (res === 'baixado') toast('PDF salvo nos downloads.'); }
+    catch (e) { toast('Não consegui gerar o PDF: ' + (e.message || e)); } finally { setOcup(''); }
+  };
+  return html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    ${retirada && html`<div className="note ok" style=${{ margin: 0 }}>Retirada registrada. As peças saíram do CD para ${r.destino}.</div>`}
+    ${prev ? html`<img src=${prev} alt="Prévia do termo" style=${{ width: '100%', borderRadius: 12, border: '1px solid var(--line)', background: '#fff' }} />` : html`<div className="card"><${Vazio}>Montando a prévia…</${Vazio}></div>`}
+    <button className="btn block" disabled=${!!ocup} onClick=${() => fazer('colab')}><${Ic} n="download" s=${18} />${ocup === 'colab' ? 'Gerando…' : 'Via do colaborador · FOR-SUP-001'}</button>
+    <button className="btn white block" disabled=${!!ocup} onClick=${() => fazer('resp')}><${Ic} n="download" s=${18} />${ocup === 'resp' ? 'Gerando…' : 'Via do responsável · FOR-SUP-002'}</button>
+    ${ocup && ocup.length > 6 && html`<div className="hint">${ocup}</div>`}
+    <${StatusDrive} r=${atual} />
+    ${!driveConfigurado() && html`<div className="hint">Para os termos irem sozinhos para o Drive, o escritório liga a integração em Gestão › Configurações.</div>`}
+  </div>`;
+}
+
+/* ---------- termo em PDF (modelos FOR-SUP-001 e FOR-SUP-002) ---------- */
+function versaoTermo(r) { return (r.devolucoes || []).length; }
+function linhasTermo(r) { // cada devolução vira uma linha própria; o que está com a pessoa fica numa linha sem data de devolução
+  const out = [];
+  r.termo.itens.forEach(i => {
+    const nfs = nfsTexto(i.nfs); const desc = (descItem(i.key) + (nfs ? ' · ' + nfs : '')).toUpperCase(); let resta = i.qtd;
+    (r.devolucoes || []).forEach(d => { const q = Math.min(resta, Number((d.itens || {})[i.key]) || 0); if (q > 0) { out.push({ qtd: q, desc, dev: d }); resta -= q; } });
+    if (resta > 0) out.push({ qtd: resta, desc, dev: null });
+  });
+  return out;
+}
+function paginasTermo(r, via) {
+  const t = r.termo; const c = t.colaborador; const linhas = linhasTermo(r); const dRet = fmtData(dataLocal(new Date(t.em)));
+  const cod = via === 'colab' ? 'FOR_SUP-001' : 'FOR_SUP-002';
+  const titulo = via === 'colab' ? 'CONTROLE DE FERRAMENTAS/EQUIPAMENTOS - COLABORADOR' : 'CONTROLE DE FERRAMENTAS/EQUIPAMENTOS - DIÁRIA';
+  const B = 'border:1px solid #13152B'; const th = 'padding:5px 4px;font-size:8.5px;font-weight:700;' + B + ';background:#E6EAE0;text-align:center;line-height:1.2';
+  const td = 'padding:3px 5px;font-size:9.5px;' + B + ';height:25px;vertical-align:middle';
+  const img = (src, h) => src ? '<img src="' + src + '" style="height:' + h + 'px;max-width:100%;object-fit:contain">' : '';
+  const dd = (d) => d ? fmtData(dataLocal(new Date(d.em))) : '';
+  const porPag = 22; const nPag = Math.max(1, Math.ceil(Math.max(linhas.length, 1) / porPag));
+  const nfs = [...new Set(t.itens.flatMap(i => Object.keys(i.nfs || {})))].map(nomeNF).join(', ');
+  const pags = [];
+  for (let p = 0; p < nPag; p++) {
+    const ult = p === nPag - 1; const fat = linhas.slice(p * porPag, (p + 1) * porPag);
+    const minimo = ult ? Math.max(fat.length, 20) : porPag; while (fat.length < minimo) fat.push(null);
+    let head, rows;
+    if (via === 'colab') {
+      head = '<tr><th style="' + th + ';width:8%">QUANTIDADE</th><th style="' + th + '">DESCRIÇÃO DO ITEM</th><th style="' + th + ';width:11%">Nº DO PATRIMÔNIO</th><th style="' + th + ';width:11%">DATA DA RETIRADA</th><th style="' + th + ';width:12%">VISTO DO INTEGRANTE</th><th style="' + th + ';width:11%">DATA DA DEVOLUÇÃO</th><th style="' + th + ';width:12%">VISTO DO ALMOXARIFADO</th></tr>';
+      rows = fat.map(l => l ? '<tr><td style="' + td + ';text-align:center">' + l.qtd + '</td><td style="' + td + '">' + esc(l.desc) + '</td><td style="' + td + '"></td><td style="' + td + ';text-align:center">' + dRet + '</td><td style="' + td + ';text-align:center;padding:1px">' + img(t.rubrica, 21) + '</td><td style="' + td + ';text-align:center">' + dd(l.dev) + '</td><td style="' + td + ';text-align:center;padding:1px">' + (l.dev ? img(l.dev.visto, 21) : '') + '</td></tr>' : '<tr>' + ('<td style="' + td + '"></td>').repeat(7) + '</tr>').join('');
+    } else {
+      head = '<tr><th style="' + th + ';width:7%" rowspan="2">QUANT.</th><th style="' + th + '" rowspan="2">DESCRIÇÃO DO ITEM</th><th style="' + th + ';width:8%" rowspan="2">Nº DO PATRIM.</th><th style="' + th + '" colspan="4">RETIRADA</th><th style="' + th + '" colspan="2">DEVOLUÇÃO</th></tr><tr><th style="' + th + ';width:8.5%">DATA</th><th style="' + th + ';width:15%">NOME / MATRÍCULA</th><th style="' + th + ';width:9.5%">VISTO DO INTEGRANTE</th><th style="' + th + ';width:6.5%">OBRA</th><th style="' + th + ';width:8.5%">DATA</th><th style="' + th + ';width:9.5%">VISTO DO ALMOX.</th></tr>';
+      rows = fat.map(l => l ? '<tr><td style="' + td + ';text-align:center">' + l.qtd + '</td><td style="' + td + ';font-size:8.5px">' + esc(l.desc) + '</td><td style="' + td + '"></td><td style="' + td + ';text-align:center;font-size:8.5px">' + dRet + '</td><td style="' + td + ';font-size:8px;line-height:1.2">' + esc(c.nome) + (c.matricula ? ' / ' + esc(c.matricula) : '') + '</td><td style="' + td + ';text-align:center;padding:1px">' + img(t.rubrica, 21) + '</td><td style="' + td + ';text-align:center;font-size:8px">GÁVEA</td><td style="' + td + ';text-align:center;font-size:8.5px">' + dd(l.dev) + '</td><td style="' + td + ';text-align:center;padding:1px">' + (l.dev ? img(l.dev.visto, 21) : '') + '</td></tr>' : '<tr>' + ('<td style="' + td + '"></td>').repeat(9) + '</tr>').join('');
+    }
+    const cab = '<table style="width:100%;border-collapse:collapse"><tr><td style="' + B + ';width:20%;text-align:center;padding:8px">' + (window.__LOGO__ ? '<img src="' + window.__LOGO__ + '" style="height:42px">' : '<b>CCG</b>') + '</td><td style="' + B + ';text-align:center;font-weight:700;font-size:13.5px;padding:8px">' + titulo + '</td><td style="' + B + ';width:28%;padding:0"><table style="width:100%;border-collapse:collapse;font-size:8.5px"><tr><td style="padding:4px 6px;border-bottom:1px solid #13152B;border-right:1px solid #13152B"><b>TIPO DE DOCUMENTO:</b><br>FORMULÁRIO</td><td style="padding:4px 6px;border-bottom:1px solid #13152B"><b>CÓDIGO:</b><br>' + cod + '</td></tr><tr><td style="padding:4px 6px;border-right:1px solid #13152B"><b>REVISÃO:</b><br>01</td><td style="padding:4px 6px"><b>DATA:</b><br>26/06/2023</td></tr></table></td></tr></table>';
+    const lb = (l, v, w) => '<td style="' + td + ';height:30px' + (w ? ';width:' + w : '') + '"><b style="font-size:7.5px;display:block">' + l + '</b>' + esc(v || '') + '</td>';
+    const topo = via === 'colab' ? '<table style="width:100%;border-collapse:collapse;margin-top:6px"><tr>' + lb('NOME DO FUNCIONÁRIO:', c.nome, '48%') + lb('MATRÍCULA:', c.matricula, '16%') + lb('OBRA:', t.obra) + '</tr><tr>' + lb('CARGO/FUNÇÃO:', c.cargo) + lb('RESPONSÁVEL DO SETOR:', (t.responsavelSetor || '').toUpperCase()) + lb('SETOR:', (c.setor || '').toUpperCase()) + '</tr></table>' : '';
+    const decl = '<div style="' + B + ';margin-top:8px;padding:7px 10px;font-size:9px;line-height:1.45"><b style="display:block;text-align:center;margin-bottom:3px">DECLARAÇÃO DO RESPONSÁVEL</b>Como signatário do presente Termo de Responsabilidade, declaro para os devidos fins, que os bens aqui relacionados foram inventariados e localizados fisicamente, encontrando-se em bom estado de conservação. Reconhecendo a exatidão das informações aqui prestadas comprometo-me pela guarda e proteção desses bens, conservando-os adequadamente ficando assim, responsável pelo ônus da não observância destes cuidados. Autorizando desde já a empregadora o desconto em folha de pagamento do valor dos itens que por culpa ou dolo, sejam extraviados ou danificados.</div>';
+    const ass = (src, nome, papel) => '<div style="flex:1;text-align:center"><div style="height:52px;display:flex;align-items:flex-end;justify-content:center">' + img(src, 50) + '</div><div style="border-top:1px solid #13152B"></div><div style="font-size:9.5px;font-weight:700;margin-top:3px">' + esc(nome) + '</div><div style="font-size:8.5px;color:#4E5752">' + papel + '</div></div>';
+    const sigs = '<div style="display:flex;gap:44px;padding:0 30px;margin-top:14px">' + ass(t.assColab, c.nome + (c.matricula ? ' · MAT. ' + c.matricula : ''), 'COLABORADOR') + ass(t.assResp, (t.respNome || '').toUpperCase() + (t.respMat ? ' · MAT. ' + t.respMat : ''), 'RESPONSÁVEL PELO TERMO') + '</div>';
+    const rod = '<div style="display:flex;justify-content:space-between;gap:12px;font-size:8px;color:#8A9289;border-top:1px solid #D7DBD0;padding-top:5px;margin-top:8px"><span>' + (via === 'colab' ? 'VIA DO COLABORADOR' : 'VIA DO RESPONSÁVEL') + ' · ' + esc(r.numero) + ' · ' + esc(r.destino) + (nfs ? ' · ' + esc(nfs) : '') + (r.status === 'quitado' ? ' · TERMO QUITADO' : '') + '</span><span style="white-space:nowrap">Controle de Peças · ' + fmtData(hoje()) + ' ' + fmtHora(agoraISO()) + ' · pág. ' + (p + 1) + '/' + nPag + '</span></div>';
+    pags.push('<div class="pg" style="width:794px;height:1123px;box-sizing:border-box;background:#fff;font-family:\'IBM Plex Sans\',Arial,sans-serif;color:#13152B;padding:38px 42px 26px;display:flex;flex-direction:column">' + cab + topo + '<table style="width:100%;border-collapse:collapse;margin-top:8px">' + head + rows + '</table>' + (ult ? decl + '<div style="flex:1"></div>' + sigs : '<div style="flex:1"></div>') + rod + '</div>');
+  }
+  return pags;
+}
+async function gerarPDFTermo(r, via, aoProgresso) {
+  await loadScript(LIB_JSPDF);
+  const pdf = new window.jspdf.jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
+  const pags = paginasTermo(r, via);
+  for (let i = 0; i < pags.length; i++) {
+    aoProgresso && aoProgresso('Montando página ' + (i + 1) + ' de ' + pags.length + '…');
+    const c = await fotografar(pags[i], 794); if (i) pdf.addPage();
+    pdf.addImage(c.toDataURL('image/jpeg', 0.9), 'JPEG', 0, 0, 210, 297);
+  }
+  pdf.setProperties({ title: 'Termo ' + r.numero + ' · ' + r.termo.colaborador.nome, author: 'CCG · Controle de Peças' });
+  return pdf.output('blob');
+}
+function semAcento(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+function nomeArquivoTermo(r, via) {
+  const c = r.termo.colaborador; const d = dataLocal(new Date(r.termo.em));
+  return semAcento(d + ' - ' + r.numero + ' - ' + c.nome.toUpperCase() + (c.matricula ? ' (' + c.matricula + ')' : '') + ' - Termo ' + (via === 'colab' ? 'FOR-SUP-001 via colaborador' : 'FOR-SUP-002 via responsavel') + '.pdf').replace(/[\\/:*?"<>|]/g, '-').replace(/[^\x20-\x7E]/g, '');
+}
+
+/* ---------- integração com o Google Drive (Apps Script da planilha de cadastro) ----------
+   config().driveURL = endereço do app da web do Apps Script. O app manda o PDF; o script guarda em
+   Termos › Empresa › Local › NF. A cada devolução o termo é refeito e substitui o anterior. */
+function driveConfigurado() { return store.modo !== 'demo' && !!(config().driveURL || '').trim(); }
+async function chamarScript(dados) {
+  const url = (config().driveURL || '').trim(); if (!url) throw new Error('integração não configurada');
+  const u = window.firebase && firebase.auth().currentUser; if (!u) throw new Error('sem login');
+  const idToken = await u.getIdToken();
+  const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ idToken }, dados)) });
+  const j = await resp.json().catch(() => null); if (!j) throw new Error('resposta inválida do script');
+  if (!j.ok) throw new Error(j.erro || 'erro no script'); return j;
+}
+function pastasTermo(r) {
+  const ids = [...new Set(r.termo.itens.flatMap(i => Object.keys(i.nfs || {}).filter(nf => i.nfs[nf] > 0)))];
+  const out = ids.map(id => { const n = store.pegar('notas', id); return { empresa: n ? grupoEmpresa(n.fornecedor) : 'Sem nota', local: (n && n.local) || r.destino, nf: n ? 'NF ' + n.numero : 'Sem nota' }; });
+  return out.length ? out : [{ empresa: 'Sem nota', local: r.destino, nf: 'Sem nota' }];
+}
+const _enviando = {};
+async function enviarTermosDrive(r) {
+  if (!driveConfigurado() || !navigator.onLine || _enviando[r.id]) return;
+  _enviando[r.id] = true; const versao = versaoTermo(r);
+  try {
+    const pastas = pastasTermo(r); const arquivos = [];
+    for (const via of ['colab', 'resp']) { const b = await gerarPDFTermo(r, via); arquivos.push({ nome: nomeArquivoTermo(r, via), pdf: await blobBase64(b) }); }
+    await chamarScript({ acao: 'termo', pastas, arquivos, pedido: r.numero });
+    const atual = store.pegar('remessas', r.id); if (atual && versaoTermo(atual) === versao) store.gravar('remessas', Object.assign({}, atual, { drive: { ok: true, versao, em: agoraISO() } }));
+  } catch (e) {
+    const atual = store.pegar('remessas', r.id); if (atual) store.gravar('remessas', Object.assign({}, atual, { drive: { ok: false, erro: String(e.message || e).slice(0, 120), em: agoraISO() } }));
+  } finally { delete _enviando[r.id]; }
+}
+function blobBase64(b) { return new Promise((ok, erro) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).split(',')[1]); fr.onerror = erro; fr.readAsDataURL(b); }); }
+// Aparelho do almoxarifado/escritório reenvia o que ficou pendente (sem sinal na hora, por exemplo)
+function useFilaDrive(u) {
+  useEffect(() => {
+    if (!(pode(u, 'retirar') || pode(u, 'config'))) return;
+    const rodar = () => { if (!driveConfigurado() || !navigator.onLine) return; store.todos('remessas').filter(r => r.termo && !(r.drive && r.drive.ok && r.drive.versao === versaoTermo(r))).slice(0, 3).forEach(r => enviarTermosDrive(r)); };
+    const t0 = setTimeout(rodar, 4000); const t = setInterval(rodar, 120000); window.addEventListener('online', rodar);
+    return () => { clearTimeout(t0); clearInterval(t); window.removeEventListener('online', rodar); };
+  }, []);
 }
 /* ================= ABA 4 · GESTÃO ================= */
 function TelaGestao({ ctx }) {
@@ -2252,6 +2641,51 @@ function DetalhePeca({ item, u, aoFechar }) {
   </${Sheet}>`;
 }
 
+/* ---------------- integração com a planilha de cadastro e o Drive ---------------- */
+async function sincronizarUsuarios(aoProgresso) {
+  const j = await chamarScript({ acao: 'usuarios' }); const linhas = j.linhas || []; const volta = []; let criados = 0, atualizados = 0, erros = 0;
+  for (const l of linhas) {
+    const login = String(l.login || '').trim().toLowerCase().replace(/@.*$/, '').replace(/\s+/g, '.');
+    if (!login || !String(l.nome || '').trim()) continue;
+    const tipo = /resp/i.test(l.tipo || '') ? 'responsavel' : 'usuario';
+    const email = login + '@' + (tipo === 'responsavel' ? 'responsavel.com' : 'usuario.com'); const id = email.replace(/[^a-z0-9]/g, '_');
+    const ativo = !/^n/i.test(String(l.ativo || 'Sim').trim());
+    aoProgresso && aoProgresso('Conferindo ' + l.nome + '…');
+    const doc = { id, email, nome: String(l.nome).trim(), matricula: String(l.matricula || '').trim(), cargo: String(l.cargo || '').trim(), setor: String(l.setor || '').trim(), perfil: tipo, local: String(l.frente || '').trim(), ativo };
+    const ja = store.pegar('usuarios', id); let situacao;
+    if (!ativo) { if (ja) store.gravar('usuarios', Object.assign({}, ja, doc)); situacao = 'Desativado'; }
+    else {
+      let criou = false, erro = '';
+      if (!ja) {
+        const senha = String(l.senha || '').trim();
+        if (senha.length < 6) erro = 'senha inicial com menos de 6 caracteres';
+        else {
+          const r = await fetch('https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=' + FIREBASE_CONFIG.apiKey, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: senha, returnSecureToken: false }) });
+          const k = await r.json().catch(() => ({}));
+          if (r.ok) criou = true; else if (!/EMAIL_EXISTS/.test((k.error && k.error.message) || '')) erro = (k.error && k.error.message) || 'falha ao criar a conta';
+        }
+      }
+      if (erro) { erros++; situacao = 'Erro: ' + erro; }
+      else { store.gravar('usuarios', Object.assign({}, ja || {}, doc)); if (criou || !ja) { criados++; situacao = 'Acesso criado em ' + fmtData(hoje()); } else { atualizados++; situacao = 'Ativo · atualizado em ' + fmtData(hoje()); } }
+    }
+    volta.push({ linha: l.linha, email, situacao });
+  }
+  if (volta.length) await chamarScript({ acao: 'situacao', linhas: volta });
+  return { criados, atualizados, erros, total: volta.length };
+}
+function IntegracaoDrive() {
+  const cfg = config(); const [url, setUrl] = useState(cfg.driveURL || ''); const [ocup, setOcup] = useState(''); const [res, setRes] = useState('');
+  if (store.modo === 'demo') return html`<div className="card pad"><b>Planilha de cadastro e Drive</b><div className="hint" style=${{ padding: 0 }}>Disponível só na versão com Firebase.</div></div>`;
+  const salvar = () => { store.gravar('config', Object.assign({}, config(), { driveURL: url.trim() })); toast('Endereço salvo.'); };
+  const testar = async () => { setOcup('Testando…'); setRes(''); try { salvar(); const j = await chamarScript({ acao: 'ping' }); setRes('Conectado à planilha "' + (j.planilha || '') + '".'); } catch (e) { setRes('Não conectou: ' + (e.message || e)); } finally { setOcup(''); } };
+  const sinc = async () => { setOcup('Lendo a planilha…'); setRes(''); try { salvar(); const r = await sincronizarUsuarios(setOcup); setRes(r.total ? r.criados + ' acesso(s) criado(s), ' + r.atualizados + ' atualizado(s)' + (r.erros ? ', ' + r.erros + ' com erro (veja a coluna "Situação no app")' : '') + '.' : 'Nenhuma linha preenchida na planilha.'); } catch (e) { setRes('Não sincronizou: ' + (e.message || e)); } finally { setOcup(''); } };
+  return html`<div className="card pad"><b>Planilha de cadastro e Drive</b>
+    <div className="hint" style=${{ padding: 0 }}>Cole o endereço do app da web do Apps Script da planilha "Cadastro de usuários". Com ele o app cria os acessos a partir da planilha e guarda os termos no Drive (Termos › Empresa › Local › NF).</div>
+    <input className="inp" value=${url} onChange=${(e) => setUrl(e.target.value)} placeholder="https://script.google.com/macros/s/…/exec" />
+    <div style=${{ display: 'flex', gap: 8 }}><button className="btn white sm" style=${{ flex: 1 }} disabled=${!!ocup || !url.trim()} onClick=${testar}>Testar</button><button className="btn soft sm" style=${{ flex: 1.4 }} disabled=${!!ocup || !url.trim()} onClick=${sinc}>Sincronizar usuários</button></div>
+    ${(ocup || res) && html`<div className="hint" style=${{ padding: 0 }}>${ocup || res}</div>`}</div>`;
+}
+
 /* ---------------- configurações ---------------- */
 function TelaConfig({ ctx }) {
   const { usuario: u, ir } = ctx; useStore(); const cfg = config();
@@ -2268,9 +2702,10 @@ function TelaConfig({ ctx }) {
     <div className="card pad"><b>Fornecedores</b>
       <div className="tags">${(cfg.fornecedores || []).map(f => html`<span key=${f} className="tag g" style=${{ fontSize: 14, padding: '6px 12px' }}>${f}</span>`)}</div>
       <div style=${{ display: 'flex', gap: 8 }}><input className="inp" value=${novoForn} onChange=${(e) => setNovoForn(e.target.value)} placeholder="Novo fornecedor" /><button className="btn soft sm" onClick=${() => { if (novoForn.trim()) { salvarCfg({ fornecedores: (cfg.fornecedores || []).concat([novoForn.trim()]) }); setNovoForn(''); } }}>Adicionar</button></div></div>
+    <${IntegracaoDrive} />
     <div className="card pad"><b>Usuários e perfis</b>
       <div className="hint" style=${{ padding: 0 }}>Todos veem as 4 abas; o perfil define o que cada um pode alterar. ${store.modo === 'demo' ? 'No modo demonstração o perfil é escolhido na entrada.' : 'Cadastre o e-mail e o perfil aqui e crie a conta no Console do Firebase › Authentication (ou peça para a pessoa usar "Esqueci a senha" depois de criada).'}</div>
-      <div>${usuarios.map(x => html`<div key=${x.id} className="row" style=${{ padding: '10px 0' }}><div className="grow"><div className="t1">${x.nome}</div><div className="t2">${x.email} · ${PERFIS[x.perfil] ? PERFIS[x.perfil].nome : x.perfil}${x.local ? ' · ' + x.local : ''}</div></div>${x.email !== u.email && html`<button className="btn danger xs" onClick=${() => confirm('Remover ' + x.nome + '?') && store.apagar('usuarios', x.id)}>Remover</button>`}</div>`)}</div>
+      <div>${usuarios.map(x => html`<div key=${x.id} className="row" style=${{ padding: '10px 0' }}><div className="grow"><div className="t1">${x.nome}</div><div className="t2">${x.email} · ${PERFIS[x.perfil] ? PERFIS[x.perfil].nome : x.perfil}${x.matricula ? ' · mat. ' + x.matricula : ''}${x.local ? ' · ' + x.local : ''}${x.ativo === false ? ' · desativado' : ''}</div></div>${x.email !== u.email && html`<button className="btn danger xs" onClick=${() => confirm('Remover ' + x.nome + '?') && store.apagar('usuarios', x.id)}>Remover</button>`}</div>`)}</div>
       <div className="grid2"><input className="inp" placeholder="E-mail" type="email" value=${nu.email} onChange=${(e) => setNu(Object.assign({}, nu, { email: e.target.value }))} /><input className="inp" placeholder="Nome" value=${nu.nome} onChange=${(e) => setNu(Object.assign({}, nu, { nome: e.target.value }))} />
         <select className="inp" value=${nu.perfil} onChange=${(e) => setNu(Object.assign({}, nu, { perfil: e.target.value }))}>${Object.keys(PERFIS).map(p => html`<option key=${p} value=${p}>${PERFIS[p].nome}</option>`)}</select>
         <${SelLocal} valor=${nu.local} set=${(v) => setNu(Object.assign({}, nu, { local: v }))} vazio="Frente (opcional)" /></div>
@@ -2307,6 +2742,12 @@ function App() {
           try { const d = await Promise.race([fsdb.collection('usuarios').doc(id).get(), new Promise((_, rej) => setTimeout(() => rej(new Error('lento')), navigator.onLine ? 8000 : 1500))]); servidorRespondeu = !d.metadata.fromCache; if (d.exists) perfil = d.data(); } catch (e) {}
           if (!perfil) { try { const d = await fsdb.collection('usuarios').doc(id).get({ source: 'cache' }); if (d.exists) perfil = d.data(); } catch (e) {} }
           if (!perfil) { try { perfil = JSON.parse(localStorage.getItem(LSP) || 'null'); } catch (e) {} }
+          const pdom = perfilDoEmail(email);
+          if (pdom) { // o domínio do e-mail define o tipo de acesso
+            if (perfil && perfil.ativo === false) { setMsg('Este acesso foi desativado. Fale com o escritório.'); setEstado('bloqueado'); return; }
+            if (!perfil) { perfil = { id, email, nome: email.split('@')[0].replace(/[._]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()), perfil: pdom, local: '' }; if (servidorRespondeu) fsdb.collection('usuarios').doc(id).set(perfil); }
+            perfil = Object.assign({}, perfil, { perfil: pdom });
+          }
           if (!perfil && ADMIN_EMAILS.map(x => x.toLowerCase()).includes(email)) { perfil = { id, email, nome: email.split('@')[0], perfil: 'escritorio', local: '' }; if (servidorRespondeu) fsdb.collection('usuarios').doc(id).set(perfil); }
           if (!perfil) { setMsg(navigator.onLine ? 'Seu acesso ainda não foi liberado. Peça ao escritório para cadastrar o seu e-mail (' + email + ').' : 'Sem internet. Na primeira vez em cada celular é preciso entrar com internet; depois o app abre sem sinal.'); setEstado('bloqueado'); return; }
           if (!PERFIS[perfil.perfil]) perfil = Object.assign({}, perfil, { perfil: 'gestor' });
