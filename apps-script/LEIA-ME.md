@@ -9,7 +9,10 @@ Faça uma vez, logada como **controlepecasccg@gmail.com**:
    - Executar como: **Eu (controlepecasccg@gmail.com)**
    - Quem pode acessar: **Qualquer pessoa**
    - Clique em **Implantar**, autorize e copie o **URL do app da Web** (termina em `/exec`).
-5. No app, entre como escritório › **Gestão › Configurações › Planilha de cadastro e Drive**, cole o URL, toque em **Testar** e depois em **Sincronizar usuários**.
+5. Preencha a planilha: **Nome completo · Matrícula · E-mail**. O e-mail decide o acesso: `nome@responsavel.com` (almoxarifado) ou `nome@usuario.com` (só pede peças). Se quiser ver o resultado na planilha, crie uma 4ª coluna chamada **Situação**.
+6. No app, entre como escritório › **Gestão › Configurações › Planilha de cadastro e Drive**, cole o URL, toque em **Testar** e depois em **Sincronizar usuários**.
 
 "Qualquer pessoa" só deixa o endereço ser chamado: o script confere o login do app em cada pedido e recusa quem não está logado.
 Se mudar o código depois, use **Implantar › Gerenciar implantações › editar › Nova versão** para manter o mesmo URL.
+
+A senha do primeiro acesso é **Gavea + matrícula** (ex.: matrícula 262 → `Gavea262`). Cada pessoa pode trocar em **menu do perfil › Trocar minha senha**. Quem for apagado da planilha perde o acesso na próxima sincronização.

@@ -1,6 +1,9 @@
 /**
  * Controle de Peças · CCG — script da planilha "Cadastro de usuários"
  *
+ * Planilha: Nome completo | Matrícula | E-mail  (o domínio do e-mail define o acesso:
+ *   @responsavel.com = almoxarifado, @usuario.com = só pede peças). Coluna "Situação" é opcional.
+ *
  * Faz duas coisas para o app (https://ccg-controle-pecas.web.app):
  *  1) entrega as linhas da planilha para o app criar os acessos e devolve a "Situação no app";
  *  2) recebe os termos de retirada (PDF) e guarda no Drive em:
@@ -27,41 +30,26 @@ function aba_() {
 function colunas_(sh) {
   const cab = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(h => String(h).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''));
   const acha = (re) => cab.findIndex(h => re.test(h)) + 1;
-  return { nome: acha(/^nome/), matricula: acha(/^matr/), cargo: acha(/^cargo/), setor: acha(/^setor/), tipo: acha(/^tipo/), login: acha(/^login/),
-           email: acha(/^e-?mail/), senha: acha(/^senha/), frente: acha(/^frente/), ativo: acha(/^ativo/), situacao: acha(/^situa/) };
+  return { nome: acha(/^nome/), matricula: acha(/^matr/), email: acha(/^e-?mail/), situacao: acha(/^situa/) };
 }
 function prepararPlanilha() {
   const sh = aba_(); if (sh.getName() !== ABA) sh.setName(ABA);
   const c = colunas_(sh); const n = sh.getLastColumn(); const max = Math.max(sh.getMaxRows(), 300);
   if (sh.getMaxRows() < max) sh.insertRowsAfter(sh.getMaxRows(), max - sh.getMaxRows());
   sh.setFrozenRows(1);
-  sh.getRange(1, 1, 1, n).setFontWeight('bold').setFontColor('#FFFFFF').setBackground('#212B2A').setWrap(true).setVerticalAlignment('middle');
-  sh.setRowHeight(1, 42);
-  sh.getRange(2, 1, max - 1, n).setFontFamily('Arial').setFontSize(10).setVerticalAlignment('middle');
-  const lista = (col, itens) => { if (col) sh.getRange(2, col, max - 1, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(itens, true).setAllowInvalid(false).build()); };
-  lista(c.tipo, ['Responsável', 'Usuário']); lista(c.ativo, ['Sim', 'Não']);
-  [c.email, c.situacao].forEach(col => { if (col) sh.getRange(2, col, max - 1, 1).setBackground('#F2F4EE').setFontColor('#4E5752'); });
-  if (c.matricula) sh.getRange(2, c.matricula, max - 1, 1).setNumberFormat('@');
-  if (c.senha) sh.getRange(2, c.senha, max - 1, 1).setNumberFormat('@');
-  const larg = { nome: 240, matricula: 90, cargo: 160, setor: 130, tipo: 130, login: 140, email: 230, senha: 110, frente: 170, ativo: 70, situacao: 230 };
-  Object.keys(larg).forEach(k => { if (c[k]) sh.setColumnWidth(c[k], larg[k]); });
-  for (let r = 2; r <= sh.getLastRow(); r++) preencherEmail_(sh, c, r);
+  sh.getRange(1, 1, 1, n).setFontWeight('bold').setFontColor('#FFFFFF').setBackground('#212B2A').setVerticalAlignment('middle');
+  sh.setRowHeight(1, 34);
+  if (c.nome) sh.setColumnWidth(c.nome, 280);
+  if (c.matricula) { sh.setColumnWidth(c.matricula, 110); sh.getRange(2, c.matricula, max - 1, 1).setNumberFormat('@'); }
+  if (c.email) {
+    sh.setColumnWidth(c.email, 280);
+    const col = sh.getRange(2, c.email).getA1Notation().replace(/\d+/, '');
+    sh.getRange(2, c.email, max - 1, 1).setDataValidation(SpreadsheetApp.newDataValidation()
+      .requireFormulaSatisfied('=REGEXMATCH(LOWER(' + col + '2),"@(responsavel|usuario)\\.com$")')
+      .setHelpText('Use nome@responsavel.com (almoxarifado) ou nome@usuario.com (só pede peças)').setAllowInvalid(false).build());
+  }
+  if (c.situacao) { sh.setColumnWidth(c.situacao, 300); sh.getRange(2, c.situacao, max - 1, 1).setBackground('#F2F4EE').setFontColor('#4E5752'); }
   SpreadsheetApp.getActiveSpreadsheet().toast('Planilha pronta.', 'Controle de Peças');
-}
-function onEdit(e) {
-  const sh = e.range.getSheet(); if (sh.getName() !== ABA || e.range.getRow() < 2) return;
-  const c = colunas_(sh);
-  for (let r = e.range.getRow(); r < e.range.getRow() + e.range.getNumRows(); r++) preencherEmail_(sh, c, r);
-}
-function emailDe_(login, tipo) {
-  login = String(login || '').trim().toLowerCase().replace(/@.*$/, '').replace(/\s+/g, '.');
-  if (!login) return '';
-  return login + '@' + (/resp/i.test(String(tipo || '')) ? 'responsavel.com' : 'usuario.com');
-}
-function preencherEmail_(sh, c, r) {
-  if (!c.email || !c.login) return;
-  const login = sh.getRange(r, c.login).getValue(); const tipo = c.tipo ? sh.getRange(r, c.tipo).getValue() : '';
-  sh.getRange(r, c.email).setValue(emailDe_(login, tipo));
 }
 
 /* ---------------- app da web ---------------- */
@@ -91,12 +79,12 @@ function linhas_() {
   const sh = aba_(); const c = colunas_(sh); const n = sh.getLastRow(); if (n < 2) return [];
   const v = sh.getRange(2, 1, n - 1, sh.getLastColumn()).getDisplayValues();
   const g = (row, col) => col ? String(row[col - 1] || '').trim() : '';
-  return v.map((row, i) => ({ linha: i + 2, nome: g(row, c.nome), matricula: g(row, c.matricula), cargo: g(row, c.cargo), setor: g(row, c.setor), tipo: g(row, c.tipo),
-    login: g(row, c.login), senha: g(row, c.senha), frente: g(row, c.frente), ativo: g(row, c.ativo) || 'Sim' })).filter(l => l.nome && l.login);
+  return v.map((row, i) => ({ linha: i + 2, nome: g(row, c.nome), matricula: g(row, c.matricula), email: g(row, c.email).toLowerCase() })).filter(l => l.nome && l.email);
 }
 function gravarSituacao_(lista) {
   const sh = aba_(); const c = colunas_(sh); let n = 0;
-  lista.forEach(l => { if (!l.linha) return; if (c.email && l.email) sh.getRange(l.linha, c.email).setValue(l.email); if (c.situacao) sh.getRange(l.linha, c.situacao).setValue(l.situacao || ''); n++; });
+  if (!c.situacao) return 0; // a coluna "Situação" é opcional
+  lista.forEach(l => { if (!l.linha) return; sh.getRange(l.linha, c.situacao).setValue(l.situacao || ''); n++; });
   return n;
 }
 
