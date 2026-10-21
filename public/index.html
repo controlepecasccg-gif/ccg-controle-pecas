@@ -579,7 +579,7 @@ function distribuicaoNF() {
       const i = k.lastIndexOf('|'); const loc = k.slice(0, i), key = k.slice(i + 1);
       const lista = porFrente[k].filter(x => x.q > 0).sort((a, b) => _ordNF(ord)(a.nf, b.nf));
       const total = lista.reduce((t, x) => t + x.q, 0);
-      const uc = ultimaContagem(loc, key); let mont = Math.max(0, Math.min(total, uc ? uc.it.montadas : 0));
+      const uc = ultimaContagem(loc, key); let mont = 0; // sem separar montadas: tudo na frente
       lista.forEach(x => { const mo = Math.min(mont, x.q); mont -= mo; get(x.nf, key).frentes[loc] = { ag: x.q - mo, mo }; });
     });
     // faltas da conferência (não entraram no CD)
@@ -627,14 +627,12 @@ function resumoFrente(local) {
   const keys = new Set(Object.keys(sl));
   return [...keys].map(key => {
     const total = sl[key] || 0;
-    const uc = ultimaContagem(local, key);
-    let montadas = uc ? uc.it.montadas : 0; montadas = Math.max(0, Math.min(total, montadas));
-    const aguardando = Math.max(0, total - montadas);
+    const montadas = 0, aguardando = total; // não separa mais soltas e montadas: ou está no CD ou na frente
     let ultEntrada = null;
     movs.forEach(m => { if (m.key === key && m.para === 'F:' + local) { const d = dataLocal(new Date(m.em)); if (!ultEntrada || d > ultEntrada) ultEntrada = d; } });
     let ultMontagem = null;
     conts.forEach(c => (c.itens || []).forEach(i => { if (i.key === key && (i.montadas || 0) > (i.montadasAntes || 0)) { if (!ultMontagem || c.data > ultMontagem) ultMontagem = c.data; } }));
-    const ref = [ultEntrada, ultMontagem].filter(Boolean).sort().pop();
+    const ref = ultEntrada;
     const diasParado = aguardando > 0 && ref ? diasEntre(ref, hj) : 0;
     const vu = catalogoItem(key).vu || 0;
     return { key, desc: descItem(key), total, montadas, aguardando, ultEntrada, ultMontagem, diasParado, vu, valorParado: aguardando * vu };
@@ -961,18 +959,17 @@ async function gerarPlanilha() {
   // 1. Peças paradas
   const paradas = [];
   locais.forEach(l => resumoFrente(l).forEach(r => { if (r.aguardando > 0) paradas.push({
-    'Frente': l, 'Código': catalogoItem(r.key).codigo || r.key, 'Peça': r.desc, 'Saldo na frente': r.total, 'Montadas': r.montadas, 'Aguardando montagem': r.aguardando,
+    'Frente': l, 'Código': catalogoItem(r.key).codigo || r.key, 'Peça': r.desc, 'Na frente': r.total,
     'Dias parada': r.diasParado, 'Faixa': r.diasParado > 15 ? '> 15 dias' : r.diasParado > 7 ? '8 a 15 dias' : r.diasParado > 3 ? '4 a 7 dias' : '0 a 3 dias',
-    'Última entrada': fmtData(r.ultEntrada), 'Última montagem': fmtData(r.ultMontagem), 'Valor unit. (NF)': r.vu, 'Valor parado (aguardando × unit.)': r.valorParado,
+    'Última entrada': fmtData(r.ultEntrada), 'Valor unit. (NF)': r.vu, 'Valor na frente (qtd × unit.)': r.valorParado,
     'Alerta': r.diasParado > DIAS_PARADA_ALERTA ? 'SIM — devolver ou transferir' : '' }); }));
   paradas.sort((a, b) => b['Dias parada'] - a['Dias parada']);
   // 2. Verificações diárias
   const verif = [];
   store.todos('contagens').sort((a, b) => (b.data + b.criadoEm).localeCompare(a.data + a.criadoEm)).forEach(c => (c.itens || []).forEach(i => verif.push({
     'Data': fmtData(c.data), 'Dia': diaSemana(c.data), 'Frente': c.local, 'Responsável': c.responsavel, 'Hora': fmtHora(c.criadoEm), 'Código': catalogoItem(i.key).codigo || i.key, 'Peça': descItem(i.key),
-    'Saldo no sistema': i.saldo, 'Soltas esperadas': i.soltasEsperadas, 'Soltas contadas': i.soltas, 'Diferença': (i.soltas || 0) - (i.soltasEsperadas || 0),
-    'Interpretação': ({ ok: 'Conferido', montou: 'Montagem', desmontou: 'Desmontagem', falta: 'FALTA', sobra: 'SOBRA' })[i.interpretacao] || i.interpretacao,
-    'Montadas antes': i.montadasAntes, 'Montadas depois': i.montadas, 'Montadas no dia': (i.montadas || 0) - (i.montadasAntes || 0) })));
+    'Esperadas': i.esperadas != null ? i.esperadas : i.saldo, 'Contadas': i.contadas != null ? i.contadas : i.saldo, 'Diferença': i.contadas != null ? i.contadas - i.esperadas : 0,
+    'Resultado': ({ ok: 'Conferido', montou: 'Conferido', desmontou: 'Conferido', falta: 'FALTA', sobra: 'SOBRA' })[i.interpretacao] || i.interpretacao })));
   // 3. Adesão à contagem (últimos 30 dias)
   const adesao = [];
   const comMov = {}; store.todos('movimentos').forEach(m => { if (m.para && m.para.startsWith('F:')) { const l = m.para.slice(2); const d = dataLocal(new Date(m.em)); if (!comMov[l] || d < comMov[l]) comMov[l] = d; } });
@@ -993,7 +990,7 @@ async function gerarPlanilha() {
   const porNota = [];
   store.todos('notas').filter(n => n.status !== 'rascunho').sort((a, b) => (a.local || '').localeCompare(b.local || '') || (a.numero || '').localeCompare(b.numero || '')).forEach(n => resumoNota(n).itens.forEach(i => porNota.push({
     'Local da aplicação': n.local, 'NF': n.numero, 'Fornecedor': n.fornecedor, 'Código': i.codigo, 'Peça': i.desc, 'Qtd na nota': i.qtd, 'No CD': i.cd, 'Baia': catalogoItem(i.key).baia || '',
-    'Na frente · aguardando': i.ag, 'Na frente · montadas': i.mo, 'Frentes': Object.keys(i.frentes).filter(l => i.frentes[l].ag + i.frentes[l].mo > 0).map(l => l + ' ' + (i.frentes[l].ag + i.frentes[l].mo)).join('; '),
+    'Na frente': i.ag + i.mo, 'Frentes': Object.keys(i.frentes).filter(l => i.frentes[l].ag + i.frentes[l].mo > 0).map(l => l + ' ' + (i.frentes[l].ag + i.frentes[l].mo)).join('; '),
     'Em trânsito': i.transito, 'Em falta': i.falta, 'Perda': i.perda, 'Devolvido ao fornecedor': i.devolvido, 'A conferir': i.aConferir, 'Valor unit.': i.vu })));
   // 8. Pendências
   const pend = store.todos('pendencias').sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || '')).map(p => ({ 'Tipo': p.tipo === 'falta' ? 'FALTA' : 'SOBRA', 'Origem': p.origem, 'Local': p.local, 'Código': catalogoItem(p.key).codigo || p.key, 'Peça': descItem(p.key), 'Qtd': p.qtd, 'Valor em risco': p.tipo === 'falta' ? p.qtd * (catalogoItem(p.key).vu || 0) : 0, 'Status': p.status === 'aberta' ? 'Aberta' : 'Resolvida', 'Aberta em': fmtDataHora(p.criadoEm), 'Dias aberta': p.status === 'aberta' ? diasEntre(dataLocal(new Date(p.criadoEm)), H) : '', 'Registrado por': p.criadoPor, 'Observação': p.obs || '', 'Resolução': p.resolucao || '' }));
@@ -1969,7 +1966,6 @@ function TelaLocal({ ctx }) {
     ${podeF && res.length > 0 && html`<div style=${{ display: 'flex', gap: 8 }}>
       <button className="btn white sm" style=${{ flex: 1 }} onClick=${() => setModal({ t: 'transferencia' })}><${Ic} n="swap" s=${18} />Transferir</button>
       <button className="btn white sm" style=${{ flex: 1 }} onClick=${() => setModal({ t: 'devolucao', hoje: saidasHoje })}><${Ic} n="ret" s=${18} />Devolver ao CD</button></div>`}
-    ${paradas.map(p => html`<div key=${p.key} className="note o">${p.aguardando} × ${p.desc} aguardando há ${p.diasParado} dias. Aluguel correndo sem uso: transfira ou devolva.</div>`)}
     ${r.notas.length > 0 && html`<div className="card pad" style=${{ gap: 10 }}><div className="t2">${plural(r.notas.length, 'nota')} · ${nfmt(r.qtd)} peças</div><${BarraLocal} r=${r} /><${Num4} r=${r} /></div>`}
     ${r.notas.map(rn => { const n = rn.nota; const ab = aberta === n.id;
       return html`<div key=${n.id} className="card">
@@ -2002,55 +1998,37 @@ function EnviarDaFrente({ ctx, local, tipo, inicial, hojeRems, aoFechar }) {
   return html`<${Sheet} titulo=${tipo === 'devolucao' ? 'Devolver ao CD' : 'Transferir para outra frente'} aoFechar=${aoFechar} rodape=${html`<button className="btn block" onClick=${enviar}>${tipo === 'devolucao' ? 'Enviar devolução' : 'Enviar transferência'}</button>`}>
     ${tipo === 'transferencia' && html`<div className="f"><span className="lb">Para qual frente</span><${CampoLocal} valor=${dest} set=${setDest} excluir=${local} /></div>`}
     ${tipo === 'devolucao' && hojeRems && hojeRems.length > 0 && html`<button className="btn soft sm" onClick=${preencherHoje}>Preencher com o que chegou hoje (vai e volta)</button>`}
-    <div className="hint">Só peças soltas (não montadas). ${tipo === 'devolucao' ? 'Ficam em trânsito até o almoxarife confirmar.' : 'Ficam em trânsito até a outra frente confirmar.'} O app mantém a nota de origem de cada peça.</div>
-    <div>${res.filter(r => r.aguardando > 0).map(r => html`<div key=${r.key} className="row" style=${{ padding: '12px 0' }}><div className="grow"><div className="t1">${r.desc}</div><div className="t2">${r.aguardando} soltas</div></div><${Stepper} valor=${qt[r.key] || 0} max=${r.aguardando} set=${(v) => setQt(Object.assign({}, qt, { [r.key]: Math.min(Number(v) || 0, r.aguardando) }))} /></div>`)}</div>
+    <div>${res.filter(r => r.aguardando > 0).map(r => html`<div key=${r.key} className="row" style=${{ padding: '12px 0' }}><div className="grow"><div className="t1">${r.desc}</div><div className="t2">${r.aguardando} na frente</div></div><${Stepper} valor=${qt[r.key] || 0} max=${r.aguardando} set=${(v) => setQt(Object.assign({}, qt, { [r.key]: Math.min(Number(v) || 0, r.aguardando) }))} /></div>`)}</div>
   </${Sheet}>`;
 }
 
 function ContagemDia({ ctx }) {
   const { usuario: u, ir, nav } = ctx; const local = nav.p.local;
   const res = resumoFrente(local); const H = hoje();
-  const projs = store.todos('projetos').filter(p => p.local === local);
-  const capProj = {}; projs.forEach(p => (p.pontos || []).forEach(x => capProj[x.key] = (capProj[x.key] || 0) + x.qtd));
-  const [sol, setSol] = useState(() => { const o = {}; res.forEach(r => o[r.key] = r.aguardando); return o; });
-  const [interp, setInterp] = useState({});
+  const [cont, setCont] = useState(() => { const o = {}; res.forEach(r => o[r.key] = r.total); return o; });
   const podeF = pode(u, 'frente', local);
-  const linhas = res.map(r => {
-    const soltas = Number(sol[r.key]) || 0; const d = soltas - r.aguardando;
-    const op = interp[r.key] || (d < 0 ? 'montou' : d > 0 ? 'desmontou' : 'ok');
-    let montadas = r.montadas;
-    if (d < 0 && op === 'montou') montadas = r.montadas - d;
-    if (d > 0 && op === 'desmontou') montadas = Math.max(0, r.montadas - d);
-    const alertaProj = capProj[r.key] != null && montadas > capProj[r.key];
-    return Object.assign({}, r, { soltas, d, op, montadasDepois: montadas, alertaProj });
-  });
+  const linhas = res.map(r => { const contadas = Number(cont[r.key]) || 0; return Object.assign({}, r, { contadas, d: contadas - r.total }); });
   const salvar = () => {
     const ops = []; const itens = [];
     linhas.forEach(l => {
-      if (l.d < 0 && l.op === 'falta') {
-        const p = { id: uid('pd'), tipo: 'falta', origem: 'Contagem ' + fmtData(H), ref: null, local, key: l.key, qtd: -l.d, valor: -l.d * l.vu, status: 'aberta', criadoEm: agoraISO(), criadoPor: u.nome, obs: 'Esperadas ' + l.aguardando + ' soltas, contadas ' + l.soltas };
+      if (l.d < 0) {
+        const p = { id: uid('pd'), tipo: 'falta', origem: 'Contagem ' + fmtData(H), ref: null, local, key: l.key, qtd: -l.d, valor: -l.d * l.vu, status: 'aberta', criadoEm: agoraISO(), criadoPor: u.nome, obs: 'Esperadas ' + l.total + ', contadas ' + l.contadas };
         ops.push({ c: 'pendencias', doc: p }); movFIFO('divergencia', l.key, -l.d, 'F:' + local, 'PEND:' + p.id, p.id, u.nome).forEach(o => ops.push(o));
       }
-      if (l.d > 0 && l.op === 'sobra') {
-        const p = { id: uid('pd'), tipo: 'sobra', origem: 'Contagem ' + fmtData(H), ref: null, local, key: l.key, qtd: l.d, valor: 0, status: 'aberta', criadoEm: agoraISO(), criadoPor: u.nome, obs: 'Esperadas ' + l.aguardando + ' soltas, contadas ' + l.soltas };
+      if (l.d > 0) {
+        const p = { id: uid('pd'), tipo: 'sobra', origem: 'Contagem ' + fmtData(H), ref: null, local, key: l.key, qtd: l.d, valor: 0, status: 'aberta', criadoEm: agoraISO(), criadoPor: u.nome, obs: 'Esperadas ' + l.total + ', contadas ' + l.contadas };
         ops.push({ c: 'pendencias', doc: p }); ops.push(movimento('sobra', l.key, l.d, 'SOBRA', 'F:' + local, p.id, u.nome, { nf: '' }));
       }
-      const saldoDepois = l.total + (l.op === 'falta' ? l.d : 0) + (l.op === 'sobra' ? l.d : 0);
-      itens.push({ key: l.key, saldo: saldoDepois, soltasEsperadas: l.aguardando, soltas: l.soltas, montadasAntes: l.montadas, montadas: l.montadasDepois, interpretacao: l.d === 0 ? 'ok' : l.op });
+      itens.push({ key: l.key, saldo: l.contadas, esperadas: l.total, contadas: l.contadas, interpretacao: l.d < 0 ? 'falta' : l.d > 0 ? 'sobra' : 'ok' });
     });
     const exist = contagemDoDia(local, H);
     ops.push({ c: 'contagens', doc: { id: exist ? exist.id : uid('ct'), local, data: H, responsavel: u.nome, itens, criadoEm: agoraISO() } });
     store.gravarVarios(ops); toast('Contagem confirmada.'); ir('cd', 'local', { local });
   };
-  const bt = (on) => ({ minHeight: 42, padding: '0 14px', borderRadius: 999, fontSize: 13, fontWeight: 600, border: 'none', background: on ? 'var(--navy)' : 'var(--bg)', color: on ? '#fff' : 'var(--navy)' });
   return html`<${Tela} ctx=${ctx} eyebrow=${local + ' · ' + diaSemana(H) + ' ' + fmtDataCurta(H)} titulo="Contagem do dia" voltar=${() => ir('cd', 'local', { local })}>
     ${linhas.length ? linhas.map(l => html`<div key=${l.key} className="card pad">
-      <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}><span className="t1">${l.desc}</span><span className="t3" style=${{ whiteSpace: 'nowrap' }}>saldo ${l.total}</span></div>
-      <div style=${{ display: 'flex', alignItems: 'center', gap: 10 }}><span className="t2" style=${{ flex: 1 }}>Soltas<br/>esperadas ${l.aguardando}</span><${Stepper} valor=${sol[l.key]} set=${(v) => setSol(Object.assign({}, sol, { [l.key]: v }))} /></div>
-      ${l.d < 0 && html`<div className="chips"><button style=${bt(l.op === 'montou')} onClick=${() => setInterp(Object.assign({}, interp, { [l.key]: 'montou' }))}>Montamos ${-l.d}</button><button style=${bt(l.op === 'falta')} onClick=${() => setInterp(Object.assign({}, interp, { [l.key]: 'falta' }))}>Não montamos · faltam ${-l.d}</button></div>`}
-      ${l.d > 0 && html`<div className="chips"><button style=${bt(l.op === 'desmontou')} onClick=${() => setInterp(Object.assign({}, interp, { [l.key]: 'desmontou' }))}>Desmontamos ${l.d}</button><button style=${bt(l.op === 'sobra')} onClick=${() => setInterp(Object.assign({}, interp, { [l.key]: 'sobra' }))}>Sobram ${l.d}</button></div>`}
-      <div className=${'note ' + (l.op === 'falta' ? 'm' : l.op === 'sobra' ? 'b' : 'gr')}>${l.op === 'falta' ? 'Falta de ' + (-l.d) + ' · ' + brl(-l.d * l.vu) + ' · vira pendência' : l.op === 'sobra' ? 'Sobra de ' + l.d + ' · vira pendência' : l.montadasDepois + ' montadas' + (l.montadasDepois !== l.montadas ? ' · ' + (l.montadasDepois > l.montadas ? '+' + (l.montadasDepois - l.montadas) + ' hoje' : 'desmontamos ' + (l.montadas - l.montadasDepois)) : ' · sem mudança')}</div>
-      ${l.alertaProj && html`<div className="note o">O projeto prevê ${capProj[l.key]} desta peça aqui e o cálculo deu ${l.montadasDepois} montadas. Confira se não há peça faltando.</div>`}
+      <div style=${{ display: 'flex', alignItems: 'center', gap: 10 }}><span className="grow"><div className="t1">${l.desc}</div><div className="t2">esperadas ${l.total}</div></span><${Stepper} valor=${cont[l.key]} set=${(v) => setCont(Object.assign({}, cont, { [l.key]: v }))} /></div>
+      ${l.d !== 0 && html`<div className=${'note ' + (l.d < 0 ? 'm' : 'b')} style=${{ margin: 0 }}>${l.d < 0 ? 'Falta de ' + (-l.d) + ' · ' + brl(-l.d * l.vu) + ' · vira pendência' : 'Sobra de ' + l.d + ' · vira pendência'}</div>`}
     </div>`) : html`<div className="card"><${Vazio}>Nenhuma peça nesta frente.</${Vazio}></div>`}
     ${!podeF && html`<div className="note y">Seu perfil só pode consultar esta contagem.</div>`}
     ${linhas.length > 0 && podeF && html`<${Rodape}><button className="btn block" onClick=${salvar}>Confirmar contagem</button></${Rodape}>`}
@@ -2681,8 +2659,8 @@ function TelaGestao({ ctx }) {
   const corDias = (d) => d > 15 ? ['m'] : d > DIAS_PARADA_ALERTA ? ['o'] : ['g'];
   return html`<${Tela} ctx=${ctx} eyebrow=${diaSemana(H) + ' ' + fmtDataCurta(H)} titulo="Gestão" direita=${html`<button className="hbtn" disabled=${gerando} aria-label="Baixar planilha gerencial" onClick=${exportar}><${Ic} n="download" s=${16} w=${2.4} />${gerando ? '…' : 'Planilha'}</button>`}>
     <div className="grid2">
-      <${Kpi} v=${nfmt(p7.reduce((t, r) => t + r.aguardando, 0))} l=${'paradas há +' + DIAS_PARADA_ALERTA + ' dias'} cor="var(--orange-t)" />
-      <${Kpi} v=${brl(p7.reduce((t, r) => t + r.valorParado, 0)).replace(',00', '')} l="valor parado (NF)" cor="var(--orange-t)" />
+      <${Kpi} v=${nfmt(p7.reduce((t, r) => t + r.aguardando, 0))} l=${'na frente há +' + DIAS_PARADA_ALERTA + ' dias'} cor="var(--orange-t)" />
+      <${Kpi} v=${brl(p7.reduce((t, r) => t + r.valorParado, 0)).replace(',00', '')} l=${'valor na frente há +' + DIAS_PARADA_ALERTA + ' dias'} cor="var(--orange-t)" />
       <${Kpi} v=${nfmt(faltaQ)} l=${'em falta · ' + brl(faltaV).replace(',00', '')} cor="var(--mag-t)" />
       <${Kpi} v=${adesao == null ? '—' : adesao + '%'} l="adesão à contagem (7 dias)" />
     </div>
@@ -2694,7 +2672,7 @@ function TelaGestao({ ctx }) {
       <span className="grow"><div className="t1">${x.local}</div><div className="t2">${nfmt(x.cd)} no CD · ${nfmt(x.ag + x.mo + (x.transito || 0))} na frente${x.falta ? ' · ' + nfmt(x.falta) + ' em falta' : ''}</div></span><span className="chev">›</span></button>`)}
       ${!vis.some(x => x.notas.length) && html`<${Vazio}>Nenhuma nota conferida ainda.</${Vazio}>`}</div>
     </div><div className="dcol">
-    <div className="sec">Peças paradas <span className="t2">aguardando montagem</span></div>
+    <div className="sec">Há mais tempo nas frentes <span className="t2">dias desde a chegada</span></div>
     <div className="card">${paradas.length ? (todasParadas ? paradas : paradas.slice(0, 6)).map(p => html`<button key=${p.local + p.key} className="row" onClick=${() => ir('cd', 'local', { local: p.local })}>
       <span className="grow"><div className="t1">${p.aguardando} × ${p.desc}</div><div className="t2">${p.local} · ${brl(p.valorParado)}</div></span><span className=${'tag ' + corDias(p.diasParado)}>${plural(p.diasParado, 'dia')}</span></button>`) : html`<${Vazio}>Nenhuma peça aguardando montagem.</${Vazio}>`}
       ${paradas.length > 6 && html`<button className="link" style=${{ padding: '12px 16px' }} onClick=${() => setTodasParadas(!todasParadas)}>${todasParadas ? 'Mostrar menos' : 'Ver todas (' + paradas.length + ')'}</button>`}</div>
