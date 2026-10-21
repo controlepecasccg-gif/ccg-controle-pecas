@@ -16,3 +16,6 @@ Faça uma vez, logada como **controlepecasccg@gmail.com**:
 Se mudar o código depois, use **Implantar › Gerenciar implantações › editar › Nova versão** para manter o mesmo URL.
 
 A senha do primeiro acesso é **Gavea + matrícula** (ex.: matrícula 262 → `Gavea262`). No primeiro acesso o app pede para a pessoa criar uma senha só dela (mín. 8 caracteres, maiúscula, minúscula e caractere especial) e confirmar nome e matrícula, igual ao app de Segurança do Trabalho. Quem for apagado da planilha perde o acesso na próxima sincronização.
+
+## Sincronização automática
+Depois de colar o código: na planilha, menu **Controle de Peças › Ligar sincronização automática (a cada 10 min)** (uma vez só; autorize). A partir daí quem entra na planilha ganha acesso e quem sai perde, sem abrir o app. Crie uma coluna **Situação** se quiser ver o resultado de cada linha.

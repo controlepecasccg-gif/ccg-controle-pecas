@@ -16,11 +16,16 @@ const API_KEY = 'AIzaSyBUEkbbQ0ToFqbVSMOH7Q0jD1IQxl_gS6Q';           // chave p�
 const PASTA_TERMOS_ID = '1qSdA0tOnD_FVCxxOUpqKwVmArAmPwNJ1';         // pasta "Termos" (criada pela Byanca)
 const ADMINS = ['controlepecasccg@gmail.com'];                        // podem ler a planilha pelo app
 const ABA = 'Usuários';
+const PROJETO = 'ccg-controle-pecas';
+const FS = 'https://firestore.googleapis.com/v1/projects/' + PROJETO + '/databases/(default)/documents';
+const ROBO_EMAIL = 'sincronizador@robo.controlepecas';   // conta interna que o script usa para gravar no app
 
 /* ---------------- planilha ---------------- */
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('Controle de Peças')
     .addItem('Preparar planilha (formatação e listas)', 'prepararPlanilha')
+    .addItem('Ligar sincronização automática (a cada 10 min)', 'ligarSincronizacao')
+    .addItem('Sincronizar agora', 'sincronizarUsuarios')
     .addToUi();
 }
 function aba_() {
@@ -107,5 +112,79 @@ function salvarTermo_(d) {
       });
     });
     return out;
+  } finally { lock.releaseLock(); }
+}
+
+/* ---------------- sincronização automática (planilha → acessos do app) ----------------
+   A cada 10 minutos: cria o acesso de quem entrou na planilha (senha inicial Gavea + matrícula),
+   atualiza nome e matrícula e desativa quem saiu. Escreve o resultado na coluna "Situação", se existir. */
+function ligarSincronizacao() {
+  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'sincronizarUsuarios').forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('sincronizarUsuarios').timeBased().everyMinutes(10).create();
+  sincronizarUsuarios();
+  try { SpreadsheetApp.getActiveSpreadsheet().toast('Sincronização automática ligada: a cada 10 minutos.', 'Controle de Peças'); } catch (e) {}
+}
+function idt_(url, corpo) {
+  const r = UrlFetchApp.fetch(url + '?key=' + API_KEY, { method: 'post', contentType: 'application/json', payload: JSON.stringify(corpo), muteHttpExceptions: true });
+  return { ok: r.getResponseCode() === 200, j: JSON.parse(r.getContentText() || '{}') };
+}
+function tokenRobo_() {
+  const pr = PropertiesService.getScriptProperties(); let senha = pr.getProperty('ROBO_SENHA');
+  if (!senha) {
+    senha = Utilities.getUuid() + 'Aa1!'; const c = idt_('https://identitytoolkit.googleapis.com/v1/accounts:signUp', { email: ROBO_EMAIL, password: senha, returnSecureToken: true });
+    if (!c.ok) throw new Error('não consegui criar a conta interna: ' + JSON.stringify(c.j.error || c.j));
+    pr.setProperty('ROBO_SENHA', senha); return c.j.idToken;
+  }
+  const r = idt_('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword', { email: ROBO_EMAIL, password: senha, returnSecureToken: true });
+  if (!r.ok) throw new Error('não consegui entrar com a conta interna: ' + JSON.stringify(r.j.error || r.j));
+  return r.j.idToken;
+}
+function fsVal_(v) { return typeof v === 'boolean' ? { booleanValue: v } : { stringValue: String(v == null ? '' : v) }; }
+function fsDoc_(d) { const f = {}; (d.fields ? Object.keys(d.fields) : []).forEach(k => { const x = d.fields[k]; f[k] = 'booleanValue' in x ? x.booleanValue : 'stringValue' in x ? x.stringValue : 'integerValue' in x ? Number(x.integerValue) : 'doubleValue' in x ? x.doubleValue : null; }); return f; }
+function usuariosApp_(tk) {
+  const out = {}; let pg = '';
+  do {
+    const r = UrlFetchApp.fetch(FS + '/usuarios?pageSize=300' + (pg ? '&pageToken=' + pg : ''), { headers: { Authorization: 'Bearer ' + tk }, muteHttpExceptions: true });
+    if (r.getResponseCode() !== 200) throw new Error('não consegui ler os usuários do app: ' + r.getContentText().slice(0, 200));
+    const j = JSON.parse(r.getContentText() || '{}'); (j.documents || []).forEach(d => { out[d.name.split('/').pop()] = fsDoc_(d); }); pg = j.nextPageToken || '';
+  } while (pg);
+  return out;
+}
+function gravarUsuario_(tk, id, dados) {
+  const campos = Object.keys(dados); const fields = {}; campos.forEach(k => fields[k] = fsVal_(dados[k]));
+  const url = FS + '/usuarios/' + encodeURIComponent(id) + '?' + campos.map(k => 'updateMask.fieldPaths=' + k).join('&');
+  const r = UrlFetchApp.fetch(url, { method: 'patch', contentType: 'application/json', headers: { Authorization: 'Bearer ' + tk }, payload: JSON.stringify({ fields }), muteHttpExceptions: true });
+  if (r.getResponseCode() !== 200) throw new Error('falha ao gravar no app (' + r.getResponseCode() + ')');
+}
+function perfilDoEmail_(e) { return /@responsavel\.com$/.test(e) ? 'responsavel' : /@usuario\.com$/.test(e) ? 'usuario' : ''; }
+function hoje_() { return Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'dd/MM/yyyy'); }
+function sincronizarUsuarios() {
+  const lock = LockService.getScriptLock(); if (!lock.tryLock(20000)) return;
+  try {
+    const tk = tokenRobo_(); const app = usuariosApp_(tk); const linhas = linhas_(); const volta = []; const naPlanilha = {};
+    linhas.forEach(l => {
+      const email = l.email; const id = email.replace(/[^a-z0-9]/g, '_'); const perfil = perfilDoEmail_(email); naPlanilha[id] = true;
+      if (!perfil) { volta.push({ linha: l.linha, situacao: 'Erro: o e-mail precisa terminar em @responsavel.com ou @usuario.com' }); return; }
+      const ja = app[id]; const mat = String(l.matricula || '').replace(/\s+/g, '');
+      try {
+        if (!ja || ja.ativo === false) {
+          if (!ja) {
+            if (!mat) { volta.push({ linha: l.linha, situacao: 'Erro: falta a matrícula (ela forma a senha do primeiro acesso)' }); return; }
+            const c = idt_('https://identitytoolkit.googleapis.com/v1/accounts:signUp', { email: email, password: 'Gavea' + mat, returnSecureToken: false });
+            const m = (c.j.error && c.j.error.message) || '';
+            if (!c.ok && !/EMAIL_EXISTS/.test(m)) { volta.push({ linha: l.linha, situacao: 'Erro: ' + (/INVALID_EMAIL/.test(m) ? 'e-mail inválido' : /WEAK_PASSWORD/.test(m) ? 'matrícula curta demais para a senha' : m) }); return; }
+          }
+          gravarUsuario_(tk, id, { id: id, email: email, nome: l.nome, matricula: mat, perfil: perfil, ativo: true });
+          volta.push({ linha: l.linha, situacao: (ja ? 'Reativado em ' : 'Acesso criado em ') + hoje_() + ' · senha inicial Gavea' + mat });
+        } else {
+          const muda = {}; if (!ja.senhaRedefinida && ja.nome !== l.nome) muda.nome = l.nome; if (mat && ja.matricula !== mat) muda.matricula = mat; if (ja.perfil !== perfil) muda.perfil = perfil;
+          if (Object.keys(muda).length) gravarUsuario_(tk, id, muda);
+          volta.push({ linha: l.linha, situacao: ja.senhaRedefinida ? 'Ativo · já criou a própria senha' : 'Ativo · ainda não fez o primeiro acesso (senha Gavea' + mat + ')' });
+        }
+      } catch (err) { volta.push({ linha: l.linha, situacao: 'Erro: ' + err.message }); }
+    });
+    Object.keys(app).forEach(id => { const u = app[id]; if (perfilDoEmail_(u.email || '') && u.ativo !== false && !naPlanilha[id]) gravarUsuario_(tk, id, { ativo: false }); });
+    gravarSituacao_(volta);
+    PropertiesService.getScriptProperties().setProperty('ULTIMA_SINC', new Date().toISOString());
   } finally { lock.releaseLock(); }
 }
