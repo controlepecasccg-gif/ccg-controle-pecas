@@ -19,3 +19,5 @@ A senha do primeiro acesso é **Gavea + matrícula** (ex.: matrícula 262 → `G
 
 ## Sincronização automática
 Depois de colar o código: na planilha, menu **Controle de Peças › Ligar sincronização automática (a cada 10 min)** (uma vez só; autorize). A partir daí quem entra na planilha ganha acesso e quem sai perde, sem abrir o app. Crie uma coluna **Situação** se quiser ver o resultado de cada linha.
+
+Os **termos** também saem daqui: a cada 10 minutos o script monta os PDFs (FOR-SUP-001 e FOR-SUP-002) dos pedidos retirados ou devolvidos e guarda na pasta Termos › Empresa › Local › NF. Para forçar: menu **Controle de Peças › Enviar termos ao Drive agora**.

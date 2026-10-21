@@ -1264,7 +1264,7 @@ function Casca({ usuario, sair, trocarPerfil }) {
   const fecharInst = () => { setInst(false); try { localStorage.setItem('ccg_inst_off', String(Date.now())); } catch (e) {} };
   const ctx = { usuario, ir, nav, abrirMenu: () => setMenu(true) };
   const T = (TELAS_ABA()[nav.aba] || {})[nav.tela] || TELAS_ABA()[nav.aba][''];
-  const badges = contarBadges(usuario); useFilaDrive(usuario);
+  const badges = contarBadges(usuario);
   return html`<div className="app">
     <${T} key=${nav.aba + nav.tela + JSON.stringify(nav.p)} ctx=${ctx} />
     <aside className="side" aria-label="Menu">
@@ -2249,9 +2249,9 @@ function PedidoCard({ ctx, r }) {
   </div>`;
 }
 function StatusDrive({ r }) {
-  if (!r.drive || !driveConfigurado()) return null;
-  const ok = r.drive.ok && r.drive.versao === versaoTermo(r);
-  return html`<span className="t3" style=${{ display: 'flex', alignItems: 'center', gap: 6 }}><span className="dot" style=${{ background: ok ? 'var(--ok)' : 'var(--yellow, #B8962E)' }}></span>${ok ? 'Termos salvos no Drive' : r.drive.erro ? 'Drive: ' + r.drive.erro : 'Termos aguardando envio ao Drive'}</span>`;
+  if (!r.drive || store.modo === 'demo') return null;
+  const ok = r.drive.ok && !r.drivePendente && r.drive.versao === versaoTermo(r);
+  return html`<span className="t3" style=${{ display: 'flex', alignItems: 'center', gap: 6 }}><span className="dot" style=${{ background: ok ? 'var(--ok)' : '#B8962E' }}></span>${ok ? 'Termos salvos no Drive' : r.drive.erro ? 'Drive: ' + r.drive.erro + ' (tenta de novo em até 10 min)' : 'Termos vão para o Drive em até 10 min'}</span>`;
 }
 function TelaPedidos({ ctx }) {
   const { usuario: u, ir } = ctx; useStore(); const desk = useDesk();
@@ -2393,15 +2393,15 @@ function TelaRetirada({ ctx }) {
     const ops = []; const itensT = [];
     rem.itens.forEach(i => { const q = Math.min(Number(qt[i.key]) || 0, Math.max(0, cd[i.key] || 0)) || 0; if (q <= 0) return;
       const mv = movFIFO('retirada', i.key, q, 'CD', 'F:' + rem.destino, rem.id, respNome); const nfs = {}; mv.forEach(o => { nfs[o.doc.nf] = (nfs[o.doc.nf] || 0) + o.doc.qtd; ops.push(o); });
-      itensT.push({ key: i.key, qtd: q, nfs }); });
+      itensT.push({ key: i.key, qtd: q, nfs, desc: descItem(i.key), nfTxt: nfsTexto(nfs) }); });
     if (!itensT.length) return toast('Essas peças não estão mais no CD.');
     const em = agoraISO();
     const termo = { colaborador: { nome: col.nome.trim().toUpperCase(), matricula: (col.matricula || '').trim(), cargo: (col.cargo || '').trim().toUpperCase(), setor: (col.setor || '').trim() }, via: col.via || 'digitado',
       responsavelSetor: respSetor.trim(), obra: obra.trim() || OBRA_TERMO, em, rubrica: rub, assColab: assC, respNome: respNome.trim() || u.nome, respMat: u.matricula || '', assResp: assR, itens: itensT };
+    termo.pastas = pastasTermo({ termo, destino: rem.destino }); termo.nfsTxt = [...new Set(itensT.flatMap(i => Object.keys(i.nfs || {})))].map(nomeNF).join(', ');
     const r = Object.assign({}, rem, { itens: rem.itens.map(i => Object.assign({}, i, { enviado: (itensT.find(x => x.key === i.key) || {}).qtd || 0 })), status: 'retirado', retiradoEm: em, retiradoPor: termo.colaborador.nome, termo, devolucoes: [],
-      drive: { ok: false }, historico: (rem.historico || []).concat([{ st: 'retirado', em, por: respNome }]) });
+      drive: { ok: false }, drivePendente: true, historico: (rem.historico || []).concat([{ st: 'retirado', em, por: respNome }]) });
     ops.push({ c: 'remessas', doc: r }); store.gravarVarios(ops);
-    enviarTermosDrive(r).catch(() => {});
     setFeito(r);
   };
   return html`<${Tela} ctx=${ctx} eyebrow=${'Retirada · ' + rem.numero} titulo=${rem.destino} voltar=${() => ir('pedidos')}>
@@ -2444,10 +2444,9 @@ function TelaDevolucao({ ctx }) {
       if (resta > 0) movFIFO('devolucao', i.key, resta, 'F:' + rem.destino, 'CD', rem.id, quem).forEach(o => ops.push(o)); });
     const devolucoes = (rem.devolucoes || []).concat([{ n, em, por: quem.trim() || u.nome, visto, itens }]);
     const quitado = rem.termo.itens.every(i => (dv[i.key] || 0) + (itens[i.key] || 0) >= i.qtd);
-    const r = Object.assign({}, rem, { devolucoes, status: quitado ? 'quitado' : 'retirado', quitadoEm: quitado ? em : null, drive: Object.assign({}, rem.drive || {}, { ok: false }),
+    const r = Object.assign({}, rem, { devolucoes, status: quitado ? 'quitado' : 'retirado', quitadoEm: quitado ? em : null, drive: Object.assign({}, rem.drive || {}, { ok: false }), drivePendente: true,
       historico: (rem.historico || []).concat([{ st: quitado ? 'quitado' : 'devolucao', em, por: quem }]) });
     ops.push({ c: 'remessas', doc: r }); store.gravarVarios(ops);
-    enviarTermosDrive(r).catch(() => {});
     toast(quitado ? 'Tudo devolvido. Termo quitado.' : 'Devolução registrada.'); setFeito(r);
   };
   const c = rem.termo.colaborador;
@@ -2493,7 +2492,6 @@ function TermosProntos({ r, retirada }) {
     <button className="btn white block" disabled=${!!ocup} onClick=${() => fazer('resp')}><${Ic} n="download" s=${18} />${ocup === 'resp' ? 'Gerando…' : 'Via do responsável · FOR-SUP-002'}</button>
     ${ocup && ocup.length > 6 && html`<div className="hint">${ocup}</div>`}
     <${StatusDrive} r=${atual} />
-    ${!driveConfigurado() && html`<div className="hint">Para os termos irem sozinhos para o Drive, o escritório liga a integração em Gestão › Configurações.</div>`}
   </div>`;
 }
 
@@ -2559,45 +2557,12 @@ function nomeArquivoTermo(r, via) {
   return semAcento(d + ' - ' + r.numero + ' - ' + c.nome.toUpperCase() + (c.matricula ? ' (' + c.matricula + ')' : '') + ' - Termo ' + (via === 'colab' ? 'FOR-SUP-001 via colaborador' : 'FOR-SUP-002 via responsavel') + '.pdf').replace(/[\\/:*?"<>|]/g, '-').replace(/[^\x20-\x7E]/g, '');
 }
 
-/* ---------- integração com o Google Drive (Apps Script da planilha de cadastro) ----------
-   config().driveURL = endereço do app da web do Apps Script. O app manda o PDF; o script guarda em
-   Termos › Empresa › Local › NF. A cada devolução o termo é refeito e substitui o anterior. */
-function driveConfigurado() { return store.modo !== 'demo' && !!urlScript(); }
-async function chamarScript(dados) {
-  const url = urlScript(); if (!url) throw new Error('integração não configurada');
-  const u = window.firebase && firebase.auth().currentUser; if (!u) throw new Error('sem login');
-  const idToken = await u.getIdToken();
-  const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ idToken }, dados)) });
-  const j = await resp.json().catch(() => null); if (!j) throw new Error('resposta inválida do script');
-  if (!j.ok) throw new Error(j.erro || 'erro no script'); return j;
-}
+/* ---------- Drive: quem gera e guarda os PDFs é o Apps Script da planilha (a cada 10 min).
+   O app só marca drivePendente e guarda no termo as pastas (Empresa › Local › NF). ---------- */
 function pastasTermo(r) {
   const ids = [...new Set(r.termo.itens.flatMap(i => Object.keys(i.nfs || {}).filter(nf => i.nfs[nf] > 0)))];
   const out = ids.map(id => { const n = store.pegar('notas', id); return { empresa: n ? grupoEmpresa(n.fornecedor) : 'Sem nota', local: (n && n.local) || r.destino, nf: n ? 'NF ' + n.numero : 'Sem nota' }; });
   return out.length ? out : [{ empresa: 'Sem nota', local: r.destino, nf: 'Sem nota' }];
-}
-const _enviando = {};
-async function enviarTermosDrive(r) {
-  if (!driveConfigurado() || !navigator.onLine || _enviando[r.id]) return;
-  _enviando[r.id] = true; const versao = versaoTermo(r);
-  try {
-    const pastas = pastasTermo(r); const arquivos = [];
-    for (const via of ['colab', 'resp']) { const b = await gerarPDFTermo(r, via); arquivos.push({ nome: nomeArquivoTermo(r, via), pdf: await blobBase64(b) }); }
-    await chamarScript({ acao: 'termo', pastas, arquivos, pedido: r.numero });
-    const atual = store.pegar('remessas', r.id); if (atual && versaoTermo(atual) === versao) store.gravar('remessas', Object.assign({}, atual, { drive: { ok: true, versao, em: agoraISO() } }));
-  } catch (e) {
-    const atual = store.pegar('remessas', r.id); if (atual) store.gravar('remessas', Object.assign({}, atual, { drive: { ok: false, erro: String(e.message || e).slice(0, 120), em: agoraISO() } }));
-  } finally { delete _enviando[r.id]; }
-}
-function blobBase64(b) { return new Promise((ok, erro) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).split(',')[1]); fr.onerror = erro; fr.readAsDataURL(b); }); }
-// Aparelho do almoxarifado/escritório reenvia o que ficou pendente (sem sinal na hora, por exemplo)
-function useFilaDrive(u) {
-  useEffect(() => {
-    if (!(pode(u, 'retirar') || pode(u, 'config'))) return;
-    const rodar = () => { if (!driveConfigurado() || !navigator.onLine) return; store.todos('remessas').filter(r => r.termo && !(r.drive && r.drive.ok && r.drive.versao === versaoTermo(r))).slice(0, 3).forEach(r => enviarTermosDrive(r)); };
-    const t0 = setTimeout(rodar, 4000); const t = setInterval(rodar, 120000); window.addEventListener('online', rodar);
-    return () => { clearTimeout(t0); clearInterval(t); window.removeEventListener('online', rodar); };
-  }, []);
 }
 /* ================= ABA 4 · GESTÃO ================= */
 function TelaGestao({ ctx }) {
@@ -2717,48 +2682,9 @@ function DetalhePeca({ item, u, aoFechar }) {
 }
 
 /* ---------------- integração com a planilha de cadastro e o Drive ---------------- */
-// Senha do primeiro acesso: "Gavea" + matrícula (ex.: Gavea262). A pessoa troca no menu do perfil.
-function senhaInicial(mat) { const m = String(mat || '').replace(/\s+/g, ''); return m ? 'Gavea' + m : ''; }
-async function sincronizarUsuarios(aoProgresso) {
-  const j = await chamarScript({ acao: 'usuarios' }); const linhas = j.linhas || []; const volta = []; const erros = []; let criados = 0, atualizados = 0, desativados = 0;
-  const naPlanilha = new Set();
-  for (const l of linhas) {
-    const email = String(l.email || '').trim().toLowerCase(); const nome = String(l.nome || '').trim(); if (!email || !nome) continue;
-    const tipo = perfilDoEmail(email); const id = email.replace(/[^a-z0-9]/g, '_'); naPlanilha.add(id);
-    let situacao = '';
-    if (!tipo) { situacao = 'Erro: o e-mail precisa terminar em @responsavel.com ou @usuario.com'; erros.push(nome + ': e-mail sem @responsavel.com ou @usuario.com'); volta.push({ linha: l.linha, situacao }); continue; }
-    aoProgresso && aoProgresso('Conferindo ' + nome + '…');
-    const doc = { id, email, nome, matricula: String(l.matricula || '').trim(), perfil: tipo, ativo: true };
-    const ja = store.pegar('usuarios', id); let erro = '';
-    if (!ja || ja.ativo === false) {
-      const senha = senhaInicial(doc.matricula);
-      if (!doc.matricula) erro = 'falta a matrícula (ela forma a senha do primeiro acesso)';
-      else {
-        const r = await fetch('https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=' + FIREBASE_CONFIG.apiKey, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: senha, returnSecureToken: false }) });
-        const k = await r.json().catch(() => ({})); const m = (k.error && k.error.message) || '';
-        if (!r.ok && !/EMAIL_EXISTS/.test(m)) erro = /INVALID_EMAIL/.test(m) ? 'e-mail inválido' : /WEAK_PASSWORD/.test(m) ? 'matrícula curta demais para a senha' : (m || 'falha ao criar a conta');
-      }
-    }
-    if (erro) { erros.push(nome + ': ' + erro); situacao = 'Erro: ' + erro; }
-    else { store.gravar('usuarios', Object.assign({}, ja || {}, doc)); if (!ja) { criados++; situacao = 'Acesso criado em ' + fmtData(hoje()) + ' · senha inicial ' + senhaInicial(doc.matricula); } else { atualizados++; situacao = 'Ativo'; } }
-    volta.push({ linha: l.linha, situacao });
-  }
-  // quem saiu da planilha perde o acesso
-  store.todos('usuarios').filter(x => perfilDoEmail(x.email) && x.ativo !== false && !naPlanilha.has(x.id)).forEach(x => { store.gravar('usuarios', Object.assign({}, x, { ativo: false })); desativados++; });
-  if (volta.length) { try { await chamarScript({ acao: 'situacao', linhas: volta }); } catch (e) {} }
-  return { criados, atualizados, desativados, erros, total: volta.length };
-}
 function IntegracaoDrive() {
-  const cfg = config(); const [url, setUrl] = useState(cfg.driveURL || DRIVE_URL_PADRAO); const [ocup, setOcup] = useState(''); const [res, setRes] = useState('');
-  if (store.modo === 'demo') return html`<div className="card pad"><b>Planilha de cadastro e Drive</b><div className="hint" style=${{ padding: 0 }}>Disponível só na versão com Firebase.</div></div>`;
-  const salvar = () => { store.gravar('config', Object.assign({}, config(), { driveURL: url.trim() })); toast('Endereço salvo.'); };
-  const testar = async () => { setOcup('Testando…'); setRes(''); try { salvar(); const j = await chamarScript({ acao: 'ping' }); setRes('Conectado à planilha "' + (j.planilha || '') + '".'); } catch (e) { setRes('Não conectou: ' + (e.message || e)); } finally { setOcup(''); } };
-  const sinc = async () => { setOcup('Lendo a planilha…'); setRes(''); try { salvar(); const r = await sincronizarUsuarios(setOcup); setRes(r.total ? r.criados + ' acesso(s) criado(s), ' + r.atualizados + ' já existiam' + (r.desativados ? ', ' + r.desativados + ' desativado(s) por terem saído da planilha' : '') + '.' + (r.erros.length ? ' Com erro: ' + r.erros.join(' · ') : '') : 'Nenhuma linha preenchida na planilha.'); } catch (e) { setRes('Não sincronizou: ' + (e.message || e)); } finally { setOcup(''); } };
   return html`<div className="card pad"><b>Planilha de cadastro e Drive</b>
-    <div className="hint" style=${{ padding: 0 }}>A planilha sincroniza sozinha a cada 10 minutos: quem entra ganha acesso (senha do primeiro acesso: Gavea + matrícula, ex.: Gavea262) e quem sai perde o acesso. Os termos vão para o Drive em Termos › Empresa › Local › NF. O botão abaixo só adianta a sincronização.</div>
-    <input className="inp" value=${url} onChange=${(e) => setUrl(e.target.value)} placeholder="https://script.google.com/macros/s/…/exec" />
-    <div style=${{ display: 'flex', gap: 8 }}><button className="btn white sm" style=${{ flex: 1 }} disabled=${!!ocup || !url.trim()} onClick=${testar}>Testar</button><button className="btn soft sm" style=${{ flex: 1.4 }} disabled=${!!ocup || !url.trim()} onClick=${sinc}>Sincronizar agora</button></div>
-    ${(ocup || res) && html`<div className="hint" style=${{ padding: 0 }}>${ocup || res}</div>`}</div>`;
+    <div className="hint" style=${{ padding: 0 }}>Tudo roda sozinho pela planilha "Cadastro de usuários", a cada 10 minutos: quem entra na planilha ganha acesso (senha do primeiro acesso: Gavea + matrícula, ex.: Gavea262), quem sai perde, e os termos assinados vão para o Drive em Termos › Empresa › Local › NF. Para adiantar, use o menu "Controle de Peças" na própria planilha.</div></div>`;
 }
 
 /* ---------------- configurações ---------------- */
