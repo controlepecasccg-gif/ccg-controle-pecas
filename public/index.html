@@ -679,14 +679,60 @@ async function lerTextoImagem(file, aoProgresso) {
   const r = await worker.recognize(file); await worker.terminate();
   return { texto: r.data.text, metodo: 'leitura da foto (OCR)' };
 }
-function adivinharLocal(t) {
-  const n = norm(t);
-  const locais = config().locais || LOCAIS_PADRAO;
-  if (/pass\w*\s*(de\s*)?emerg/.test(n)) return locais.find(l => /emerg/.test(norm(l))) || 'Passagem de emergência';
-  for (const l of locais) { const ln = norm(l); if (ln.length > 3 && n.includes(ln)) return l; }
-  if (/ssr\s*0?4/.test(n)) return 'SSR 04';
-  return '';
+/* ======= LOCAL DA APLICAÇÃO =======
+   A lista de locais nasce do que é lido nas notas e projetos e do que as pessoas digitam.
+   aliases: texto lido → nome escolhido (ex.: "passagem 15" → "Passagem de emergência 15"). */
+const tituloLocal = (t) => String(t || '').toLowerCase().replace(/\s+/g, ' ').trim()
+  .replace(/(^|\s)(\S)/g, (m, a, c) => a + c.toUpperCase())
+  .replace(/\b(De|Da|Do|Das|Dos|E)\b/g, w => w.toLowerCase()).replace(/\bSsr\b/g, 'SSR').replace(/\bPe\b/g, 'PE').replace(/\bVsl\b/g, 'VSL');
+function locaisTodos() {
+  const cfg = config(); const set = [];
+  const add = (l) => { l = String(l || '').trim(); if (l && l !== 'CD' && !set.some(x => norm(x) === norm(l))) set.push(l); };
+  store.todos('notas').forEach(n => add(n.local));
+  store.todos('projetos').forEach(p => add(p.local));
+  store.todos('remessas').forEach(r => { if (r.destino !== 'CD') add(r.destino); if (r.origem !== 'CD') add(r.origem); });
+  locaisComSaldo().forEach(add);
+  (cfg.locaisManuais || []).forEach(add);
+  (cfg.locais || []).filter(l => !LOCAIS_PADRAO.includes(l)).forEach(add); // a lista antiga pré-cadastrada não aparece mais sozinha
+  return set.sort((a, b) => a.localeCompare(b, 'pt-BR'));
 }
+// Guarda um local novo digitado e, se veio de uma leitura, lembra a troca para as próximas notas
+function registrarLocal(nome, lido) {
+  nome = String(nome || '').trim(); if (!nome) return;
+  const cfg = Object.assign({}, config()); let mudou = false;
+  if (!locaisTodos().some(l => norm(l) === norm(nome))) { cfg.locaisManuais = (cfg.locaisManuais || []).concat([nome]); mudou = true; }
+  if (lido && norm(lido) !== norm(nome)) { cfg.aliasLocais = Object.assign({}, cfg.aliasLocais || {}, { [norm(lido)]: nome }); mudou = true; }
+  if (mudou) store.gravar('config', cfg);
+}
+function localConhecido(cand) { // aplica a troca lembrada e casa com um local que já existe
+  if (!cand) return '';
+  const al = (config().aliasLocais || {})[norm(cand)]; if (al) return al;
+  const ex = locaisTodos().find(l => norm(l) === norm(cand)); return ex || cand;
+}
+const RE_LUGAR = /(passag|emerg|ssr|po[cç]o|shaft|esta[cç][aã]o|t[uú]nel|acesso|sa[ií]da|carioca|ap[eê]ndice|jardim|g[aá]vea|vsl|\bpe\s*\d)/i;
+// Lê o local escrito na nota (campo OBS / informações complementares) e os números de projeto (PJ 1865 1868)
+function lerLocalTexto(tudo, nomeArquivo) {
+  const t = String(tudo || '').replace(/\s+/g, ' ');
+  const pj = []; const mpj = t.match(/\bPJ\.?\s*((?:\d{4}[\s,e/]*)+)/i); if (mpj) (mpj[1].match(/\d{4}/g) || []).forEach(x => pj.push(x));
+  let cand = '';
+  const mo = t.match(/OBS\.?\s*:?\s*(.{3,80}?)(?:\s+-?\s*PJ\b|\s+N[aã]o\s+incid|\s+Local\s+de\s+Entrega|$)/i);
+  const ehLugar = (x) => x && RE_LUGAR.test(x) && !/material|solicitad|pedido|conforme/i.test(x);
+  if (mo && (mpj || ehLugar(mo[1]))) cand = mo[1];
+  if (!cand && mpj) { // sem "OBS:" legível: pega o trecho logo antes do PJ, a partir da palavra de lugar
+    const antes = t.slice(Math.max(0, mpj.index - 60), mpj.index).replace(/[-–\s]+$/, '');
+    const ks = [...antes.matchAll(/(passag\w*|ssr|po[cç]o|shaft|esta[cç][aã]o|t[uú]nel|acesso|sa[ií]da|carioca|ap[eê]ndice|jardim|vsl|\bpe\s*\d)/gi)];
+    if (ks.length) cand = antes.slice(ks[ks.length - 1].index); }
+  // nome do arquivo (ex.: "NF 64814 pass emerg 15.PDF")
+  const arq = norm(nomeArquivo || '').replace(/[_.]/g, ' ');
+  const ma = arq.match(/pass\w*\s*(?:de\s*)?emerg\w*\s*(\d+)?/);
+  let lido = cand.replace(/[^\wÀ-ú\s\d-]/g, ' ').replace(/\s+/g, ' ').trim().replace(/^(\S{1,2}\s+)+(?=\S{3})/, '').replace(/[\s-]+$/, '');
+  if (lido) { const mp = norm(lido).match(/^passag\w*\s*(?:de\s*)?(?:emerg\w*)?\s*(\d+)?$/); if (mp) lido = 'Passagem de emergência' + (mp[1] ? ' ' + mp[1] : ''); else lido = tituloLocal(lido); }
+  else if (ma) lido = 'Passagem de emergência' + (ma[1] ? ' ' + ma[1] : '');
+  else { const ms = arq.match(/ssr\s*0?(\d+)/); if (ms) lido = 'SSR ' + ms[1].padStart(2, '0'); }
+  return { lido, local: localConhecido(lido), pj };
+}
+var numeroProjeto = (t) => { const m = String(t || '').match(/\d{2}\.\d{3}\.(\d{4})(?:-\d{2})?/); return m ? m[1] : ''; };
+function adivinharLocal(t) { return lerLocalTexto(t, t).local; }
 // Separa a leitura em notas (um PDF pode trazer várias DANFEs, uma por página)
 function interpretarDanfe(texto, nomeArquivo) {
   const blocos = texto.split(/=====PAGINA \d+=====/).filter(b => b.trim());
@@ -757,7 +803,8 @@ function interpretarBloco(txt, nomeArquivo) {
   let fornecedor = /MILLS/i.test(emit || tudo) ? 'Mills' : (/^SH\b|SH FORMAS|SH F[OÔ]RMAS/i.test(emit) || /SH FORMAS|SH F[OÔ]RMAS/i.test(tudo) ? 'SH' : '');
   if (!fornecedor && emit) fornecedor = emit.split(/\s|,/).filter(w => w.length > 1 && !/^(LTDA|S\.?A|EIRELI|ME|EPP|LOCACAO|LOCAÇÃO|SERVICOS|SERVIÇOS|COMERCIO|COMÉRCIO|DE|DA|DO|E)$/i.test(w)).slice(0, 2).map(w => w[0] + w.slice(1).toLowerCase()).join(' ');
   const emissao = (tudo.match(/(\d{2}\/\d{2}\/\d{4})/) || [])[1] || '';
-  return { numero, contrato, qtdNota, totalNota, fornecedor, emissao, local: adivinharLocal((nomeArquivo || '') + ' ' + tudo), itens };
+  const loc = lerLocalTexto(tudo, nomeArquivo);
+  return { numero, contrato, qtdNota, totalNota, fornecedor, emissao, local: loc.local, localLido: loc.lido, projetosRef: loc.pj, itens };
 }
 
 /* ================= DADOS DE DEMONSTRAÇÃO ================= */
@@ -833,7 +880,7 @@ async function gerarPlanilha() {
   const X = window.XLSX; const H = hoje(); const s = saldos();
   const wb = X.utils.book_new();
   const add = (nome, linhas, larg) => { const ws = X.utils.json_to_sheet(linhas.length ? linhas : [{ Aviso: 'Sem registros' }]); if (larg) ws['!cols'] = larg.map(w => ({ wch: w })); X.utils.book_append_sheet(wb, ws, nome); };
-  const locais = [...new Set([...(config().locais || []), ...locaisComSaldo()])];
+  const locais = locaisTodos();
   // 1. Peças paradas
   const paradas = [];
   locais.forEach(l => resumoFrente(l).forEach(r => { if (r.aguardando > 0) paradas.push({
@@ -969,9 +1016,19 @@ function Foto({ url, alt, h }) {
 function Kpi({ v, l, cor }) { return html`<div className="kpi"><span className="v" style=${{ color: cor || 'inherit' }}>${v}</span><span className="l">${l}</span></div>`; }
 function Vazio({ children }) { return html`<div className="empty">${children}</div>`; }
 function SelLocal({ valor, set, id, incluirCD, vazio }) {
-  const ls = config().locais || [];
+  const ls = locaisTodos();
   return html`<select id=${id} className="inp" value=${valor || ''} onChange=${(e) => set(e.target.value)} style=${{ fontWeight: 600 }}>
     <option value="">${vazio || 'Selecione…'}</option>${incluirCD && html`<option value="CD">CD (centro de distribuição)</option>`}${ls.map(l => html`<option key=${l} value=${l}>${l}</option>`)}</select>`;
+}
+// Local da aplicação: digita livre ou escolhe um que já existe
+function CampoLocal({ valor, set, lido, autoFocus }) {
+  const id = useMemo(() => uid('dl'), []); const ls = locaisTodos();
+  return html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <input className="inp" list=${id} autoFocus=${autoFocus} value=${valor || ''} placeholder="Digite ou escolha (ex.: Passagem de emergência 15)" onChange=${(e) => set(e.target.value)} onBlur=${(e) => set(e.target.value.replace(/\s+/g, ' ').trim())} style=${{ fontWeight: 600 }} />
+    <datalist id=${id}>${ls.map(l => html`<option key=${l} value=${l} />`)}</datalist>
+    ${lido && norm(lido) !== norm(valor) && html`<span className="t3">Lido no arquivo: "${lido}" · <button className="link" style=${{ padding: 0, fontSize: 11 }} onClick=${() => set(lido)}>usar este</button></span>`}
+    ${ls.length > 0 && html`<div className="chips" style=${{ gap: 6 }}>${ls.filter(l => norm(l) !== norm(valor)).slice(0, 6).map(l => html`<button key=${l} type="button" className="chip" style=${{ minHeight: 34, fontSize: 12 }} onClick=${() => set(l)}>${l}</button>`)}</div>`}
+  </div>`;
 }
 function useOnline() {
   const [on, set] = useState(navigator.onLine);
@@ -1237,11 +1294,33 @@ async function tipoArquivo(f) {
     return 'nota';                                                  // A4 escaneado
   } catch (e) { return 'nota'; }
 }
-function DefinirLocal({ titulo, aoFechar, aoSalvar }) {
-  const [l, setL] = useState('');
-  return html`<${Sheet} titulo=${titulo} aoFechar=${aoFechar} rodape=${html`<button className="btn block" disabled=${!l} onClick=${() => aoSalvar(l)}>Salvar</button>`}>
-    <div className="hint" style=${{ padding: 0 }}>O app não achou o local da aplicação no arquivo. Escolha onde ele vai ser usado.</div>
-    <${SelLocal} valor=${l} set=${setL} /></${Sheet}>`;
+function DefinirLocal({ titulo, inicial, lido, texto, aoFechar, aoSalvar }) {
+  const [l, setL] = useState(inicial || '');
+  const salvar = () => { const v = l.replace(/\s+/g, ' ').trim(); if (!v) return; registrarLocal(v, lido); aoSalvar(v); };
+  return html`<${Sheet} titulo=${titulo} aoFechar=${aoFechar} rodape=${html`<button className="btn block" disabled=${!l.trim()} onClick=${salvar}>Salvar</button>`}>
+    <div className="hint" style=${{ padding: 0 }}>${texto || 'Digite o local da aplicação ou escolha um que já existe.'}</div>
+    <${CampoLocal} valor=${l} set=${setL} lido=${lido} autoFocus=${!inicial} /></${Sheet}>`;
+}
+// Troca o local de uma nota e leva junto o que veio com ela: outras notas do mesmo arquivo e os projetos ligados
+function trocarLocalNota(nota, novo) {
+  const velho = nota.local; const ops = [{ c: 'notas', doc: Object.assign({}, store.pegar('notas', nota.id), { local: novo }) }];
+  if (velho && norm(velho) !== norm(novo)) {
+    const t0 = new Date(nota.criadoEm || 0).getTime(), perto = (x) => Math.abs(new Date(x.criadoEm || 0).getTime() - t0) < 15 * 60000;
+    store.todos('notas').filter(n => n.id !== nota.id && n.local === velho && n.arquivo && n.arquivo === nota.arquivo && perto(n)).forEach(n => ops.push({ c: 'notas', doc: Object.assign({}, n, { local: novo }) }));
+    store.todos('projetos').filter(p => p.local === velho && ((p.numero && (nota.projetosRef || []).includes(p.numero)) || perto(p))).forEach(p => ops.push({ c: 'projetos', doc: Object.assign({}, p, { local: novo }) }));
+  }
+  store.gravarVarios(ops);
+  if (ops.length > 1) toast('Local trocado também em ' + plural(ops.length - 1, 'arquivo ligado', 'arquivos ligados') + ' a esta nota.');
+}
+// Linha "Local da aplicação: X · Alterar" usada na nota e no projeto
+function LinhaLocal({ local, lido, podeEditar, aoSalvar }) {
+  const [ed, setEd] = useState(false);
+  return html`<div style=${{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+    <${Ic} n="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z" s=${16} c="#4E5752" />
+    <span className="grow"><span className="t2">Local da aplicação: </span><b>${local || 'não definido'}</b></span>
+    ${podeEditar && html`<button className="link" style=${{ padding: 0 }} onClick=${() => setEd(true)}>Alterar</button>`}
+    ${ed && html`<${DefinirLocal} titulo="Local da aplicação" inicial=${local} lido=${lido} aoFechar=${() => setEd(false)} aoSalvar=${(v) => { setEd(false); aoSalvar(v); }} />`}
+  </div>`;
 }
 
 function TelaRecebimento({ ctx }) {
@@ -1249,7 +1328,7 @@ function TelaRecebimento({ ctx }) {
   const [arqs, setArqs] = useState([]); const [ocupado, setOcupado] = useState(false); const [over, setOver] = useState(false);
   const [filtro, setFiltro] = useState(() => { try { return sessionStorage.getItem('ccg_filtro_nf') || 'todas'; } catch (e) { return 'todas'; } });
   const [fechados, setFechados] = useState({}); const [mais, setMais] = useState({}); const [locProj, setLocProj] = useState(null);
-  const ref = useRef();
+  const ref = useRef(); const lote = useRef({ notas: [], projs: [] });
   const upd = (id, d) => setArqs(a => a.map(x => x.id === id ? Object.assign({}, x, d) : x));
   const podeNotas = pode(u, 'notas');
   const setF = (f) => { setFiltro(f); try { sessionStorage.setItem('ccg_filtro_nf', f); } catch (e) {} };
@@ -1264,38 +1343,41 @@ function TelaRecebimento({ ctx }) {
     if (!lidas.length) { const n = existentes.find(x => x.numero === repetidas[0].numero); return upd(id, { st: 'ok', tipo: 'nota', ext: 'NF', notas: n ? [n.id] : null, msg: repetidas.map(l => 'NF ' + l.numero).join(', ') + ' já ' + (repetidas.length > 1 ? 'estavam' : 'estava') + ' no app · nada novo' }); }
     const ops = lidas.map(l => {
       const forn = l.fornecedor || 'Outra';
-      const d = { id: uid('nf'), numero: l.numero, fornecedor: forn, contrato: l.contrato, local: l.local, emissao: l.emissao, arquivo: f.name, metodo: r.metodo, qtdNota: l.qtdNota, totalNota: l.totalNota,
+      const d = { id: uid('nf'), numero: l.numero, fornecedor: forn, contrato: l.contrato, local: l.local, localLido: l.localLido || '', projetosRef: l.projetosRef || [], emissao: l.emissao, arquivo: f.name, metodo: r.metodo, qtdNota: l.qtdNota, totalNota: l.totalNota,
         itens: l.itens.map(it => { const key = itemKey(forn, it.codigo); const cat = store.pegar('catalogo', key); return { key, codigo: it.codigo, desc: (cat && cat.desc) || it.desc, qtd: it.qtd, vu: it.vu, duvida: !!it.duvida }; }),
         status: 'rascunho', contagem: {}, criadoEm: agoraISO(), criadoPor: u.nome, textoLido: r.texto.slice(0, 20000) };
       if (validarNota(d).pronta) Object.assign(d, { status: 'liberada', liberadaEm: agoraISO(), liberadaPor: u.nome }); // leitura certinha: já fica a conferir
       return { c: 'notas', doc: d };
     });
-    store.gravarVarios(ops);
+    store.gravarVarios(ops); ops.forEach(o => lote.current.notas.push(o.doc.id));
     const revisar = ops.filter(o => o.doc.status === 'rascunho').length;
     upd(id, { st: 'ok', tipo: 'nota', ext: 'NF', notas: ops.map(o => o.doc.id),
       msg: ops.map(o => 'NF ' + (o.doc.numero || '?') + ' · ' + o.doc.fornecedor).join(', ') + (revisar ? ' · ' + plural(revisar, 'para revisar', 'para revisar') : ' · totais OK') + (repetidas.length ? ' · ' + repetidas.map(l => 'NF ' + l.numero).join(', ') + ' já estava no app' : '') });
   };
   const lerProjeto = async (f, id) => {
     const ext = (f.name.split('.').pop() || '').toUpperCase(); const nomeBase = f.name.replace(/\.[^.]+$/, '');
-    const local = adivinharLocal(f.name);
+    const numero = numeroProjeto(f.name);
+    const notaPJ = numero && store.todos('notas').filter(n => (n.projetosRef || []).includes(numero) && n.local).sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''))[0];
+    const lidoArq = lerLocalTexto('', f.name);
+    const local = notaPJ ? notaPJ.local : lidoArq.local;
     upd(id, { tipo: 'projeto', ext: 'PROJ' });
     if (ext === 'DWG' || ext === 'DXF') {
       if (f.size > DWG_MAX_MB * 1048576) throw new Error('DWG maior que ' + DWG_MAX_MB + ' MB. Envie o PDF do projeto.');
-      const pj = { id: uid('pj'), nome: nomeBase, local, tipo: 'dwg', img: null, pontos: [], dwg: { nome: f.name, tamanho: f.size, partes: 0 }, criadoEm: agoraISO(), criadoPor: u.nome };
+      const pj = { id: uid('pj'), nome: nomeBase, numero, local, localLido: lidoArq.lido, tipo: 'dwg', img: null, pontos: [], dwg: { nome: f.name, tamanho: f.size, partes: 0 }, criadoEm: agoraISO(), criadoPor: u.nome };
       if (store.modo === 'firebase') { const url = await lerArquivoComo(f, 'url'); pj.dwg.partes = await store.salvarArquivo(pj.id, url, (m) => upd(id, { msg: m })); }
-      store.gravar('projetos', pj);
+      store.gravar('projetos', pj); lote.current.projs.push(pj.id);
       return upd(id, { st: 'ok', msg: 'DWG guardado' + (local ? ' · ' + local : '') + ' · para ver a planta, suba também o PDF', projs: [pj.id], semLocal: !local });
     }
     let ops;
     if (ext === 'PDF') {
       const { folhas, total } = await folhasDoPDF(f, (m) => upd(id, { msg: m }), 12);
-      ops = folhas.map((fl, i) => ({ c: 'projetos', doc: { id: uid('pj'), nome: nomeBase + (folhas.length > 1 ? ' · folha ' + (i + 1) + '/' + total : ''), local, tipo: 'pdf', img: fl.url, w: fl.w, h: fl.h, pontos: [], criadoEm: agoraISO(), criadoPor: u.nome } }));
-    } else { const fl = await imagemLeve(f); ops = [{ c: 'projetos', doc: { id: uid('pj'), nome: nomeBase, local, tipo: 'imagem', img: fl.url, w: fl.w, h: fl.h, pontos: [], criadoEm: agoraISO(), criadoPor: u.nome } }]; }
-    store.gravarVarios(ops);
+      ops = folhas.map((fl, i) => ({ c: 'projetos', doc: { id: uid('pj'), nome: nomeBase + (folhas.length > 1 ? ' · folha ' + (i + 1) + '/' + total : ''), numero, local, localLido: lidoArq.lido, tipo: 'pdf', img: fl.url, w: fl.w, h: fl.h, pontos: [], criadoEm: agoraISO(), criadoPor: u.nome } }));
+    } else { const fl = await imagemLeve(f); ops = [{ c: 'projetos', doc: { id: uid('pj'), nome: nomeBase, numero, local, localLido: lidoArq.lido, tipo: 'imagem', img: fl.url, w: fl.w, h: fl.h, pontos: [], criadoEm: agoraISO(), criadoPor: u.nome } }]; }
+    store.gravarVarios(ops); ops.forEach(o => lote.current.projs.push(o.doc.id));
     upd(id, { st: 'ok', msg: 'PDF · ' + plural(ops.length, 'folha') + (local ? ' · ' + local : ''), projs: ops.map(o => o.doc.id), semLocal: !local });
   };
   const subir = async (files) => {
-    files = [...files]; if (!files.length) return; setOcupado(true);
+    files = [...files]; if (!files.length) return; setOcupado(true); lote.current = { notas: [], projs: [] };
     const novos = files.map(f => ({ id: uid('f'), nome: f.name, ext: '…', msg: 'Na fila…', st: 'fila' }));
     setArqs(a => novos.concat(a));
     for (let i = 0; i < files.length; i++) {
@@ -1307,7 +1389,31 @@ function TelaRecebimento({ ctx }) {
         if (tipo === 'nota') await lerNota(f, id); else await lerProjeto(f, id);
       } catch (e) { console.error(e); upd(id, { st: 'erro', msg: e.message || 'Falha ao abrir o arquivo.' }); }
     }
+    ligarProjetosAsNotas();
     setOcupado(false);
+  };
+  // Projetos sem local pegam o local da nota: pelo número (PJ 1865 1868 na nota) ou por terem subido juntos
+  const ligarProjetosAsNotas = () => {
+    const L = lote.current;
+    const notasLote = L.notas.map(id => store.pegar('notas', id)).filter(n => n && n.local);
+    const locaisLote = [...new Set(notasLote.map(n => n.local))];
+    const ops = [];
+    // notas da mesma leva sem local escrito (ex.: 3 notas no mesmo PDF) ficam com o local das outras
+    if (locaisLote.length === 1) L.notas.map(id => store.pegar('notas', id)).filter(n => n && !n.local && n.status === 'rascunho').forEach(n => {
+      const d = Object.assign({}, n, { local: locaisLote[0] });
+      if (validarNota(d).pronta) Object.assign(d, { status: 'liberada', liberadaEm: agoraISO(), liberadaPor: u.nome });
+      ops.push({ c: 'notas', doc: d });
+    });
+    store.todos('projetos').filter(p => !p.local).forEach(p => {
+      const porPJ = p.numero && store.todos('notas').find(n => (n.projetosRef || []).includes(p.numero) && n.local);
+      const loc = porPJ ? porPJ.local : (L.projs.includes(p.id) && locaisLote.length === 1 ? locaisLote[0] : '');
+      if (loc) ops.push({ c: 'projetos', doc: Object.assign({}, p, { local: loc }) });
+    });
+    if (ops.length) {
+      store.gravarVarios(ops);
+      const ids = new Set(ops.map(o => o.doc.id));
+      setArqs(a => a.map(x => x.notas && x.notas.some(i => ids.has(i)) ? Object.assign({}, x, { msg: x.msg.replace(/ · \d+ para revisar/, '') + ' · local: ' + locaisLote[0] }) : x.projs && x.projs.some(i => ids.has(i)) ? Object.assign({}, x, { semLocal: false, msg: x.msg.replace(/ · toque.*$/, '') + ' · ' + ops.find(o => x.projs.includes(o.doc.id)).doc.local + ' (da nota)' }) : x));
+    }
   };
   const manual = () => { const d = { id: uid('nf'), numero: '', fornecedor: 'Mills', contrato: '', local: '', itens: [], status: 'rascunho', contagem: {}, criadoEm: agoraISO(), criadoPor: u.nome, metodo: 'manual', qtdNota: 0, totalNota: 0 }; store.gravar('notas', d); ir('receb', 'revisar', { id: d.id }); };
   const abrirNota = (n) => ir('receb', n.status === 'rascunho' ? (podeNotas ? 'revisar' : 'nota') : n.status === 'concluida' ? 'nota' : (podeNotas ? 'conferir' : 'nota'), { id: n.id });
@@ -1376,7 +1482,7 @@ function TelaRecebimento({ ctx }) {
       <div style=${{ display: 'flex', gap: 14, flexWrap: 'wrap', padding: '0 4px' }} className="t3">${[['conferir', 'a conferir'], ['falta', 'com falta'], ['sobra', 'com sobra'], ['ok', 'tudo certo']].map(([k, l]) => html`<span key=${k} style=${{ display: 'flex', alignItems: 'center', gap: 5 }}><span className="dot" style=${{ width: 9, height: 9, background: SIT_COR[k] }}></span>${l}</span>`)}</div>`
       : html`<div className="card"><${Vazio}>Nenhuma nota ainda.</${Vazio}></div>`}`}
     ${podeNotas && html`<button className="link" style=${{ alignSelf: 'center' }} onClick=${manual}>Cadastrar nota à mão</button>`}
-    ${locProj && html`<${DefinirLocal} titulo="Local do projeto" aoFechar=${() => setLocProj(null)} aoSalvar=${(l) => { store.gravarVarios(locProj.projs.map(id => ({ c: 'projetos', doc: Object.assign({}, store.pegar('projetos', id), { local: l }) }))); upd(locProj.id, { semLocal: false, msg: locProj.msg + ' · ' + l }); setLocProj(null); toast('Local salvo.'); }} />`}
+    ${locProj && html`<${DefinirLocal} titulo="Local do projeto" texto="O app não achou o local no projeto nem uma nota ligada a ele. Digite o local ou escolha um que já existe." lido=${(store.pegar('projetos', locProj.projs[0]) || {}).localLido} aoFechar=${() => setLocProj(null)} aoSalvar=${(l) => { store.gravarVarios(locProj.projs.map(id => ({ c: 'projetos', doc: Object.assign({}, store.pegar('projetos', id), { local: l }) }))); upd(locProj.id, { semLocal: false, msg: locProj.msg + ' · ' + l }); setLocProj(null); toast('Local salvo.'); }} />`}
   </${Tela}>`;
 }
 
@@ -1428,7 +1534,8 @@ function RevisarNota({ ctx }) {
     const itens = n.itens.filter(i => i.codigo).map(i => Object.assign({}, i, { key: itemKey(n.fornecedor, i.codigo), qtd: Number(i.qtd) || 0, vu: parseNumBR(i.vu) }, liberar ? { duvida: false } : {}));
     const ops = [];
     itens.forEach(i => { const c = store.pegar('catalogo', i.key); if (!c) ops.push({ c: 'catalogo', doc: { id: i.key, fornecedor: n.fornecedor, codigo: i.codigo, desc: i.desc, vu: i.vu, baia: '', rotulo: '', foto: null } }); else if (!c.vu && i.vu) ops.push({ c: 'catalogo', doc: Object.assign({}, c, { vu: i.vu }) }); });
-    const doc = Object.assign({}, n, { itens, qtdNota: Number(n.qtdNota) || 0, totalNota: parseNumBR(n.totalNota) });
+    const doc = Object.assign({}, n, { itens, local: (n.local || '').replace(/\s+/g, ' ').trim(), qtdNota: Number(n.qtdNota) || 0, totalNota: parseNumBR(n.totalNota) });
+    if (doc.local) registrarLocal(doc.local, n.localLido);
     if (liberar) { doc.status = 'liberada'; doc.liberadaEm = agoraISO(); doc.liberadaPor = u.nome; }
     ops.push({ c: 'notas', doc }); store.gravarVarios(ops);
     toast(liberar ? 'Nota pronta para conferência.' : 'Alterações salvas.');
@@ -1442,7 +1549,7 @@ function RevisarNota({ ctx }) {
         <label className="f"><span className="lb">Nº da nota</span><input className="inp" value=${n.numero} onChange=${(e) => set('numero', e.target.value.replace(/\D/g, ''))} /></label>
         <label className="f"><span className="lb">Fornecedor</span><select className="inp" value=${n.fornecedor} onChange=${(e) => set('fornecedor', e.target.value)}>${[...new Set((config().fornecedores || FORNECEDORES_PADRAO).concat([n.fornecedor || 'Outra']))].map(f => html`<option key=${f}>${f}</option>`)}</select></label>
       </div>
-      <label className="f"><span className="lb">Local da aplicação</span><${SelLocal} valor=${n.local} set=${(x) => set('local', x)} /></label>
+      <label className="f"><span className="lb">Local da aplicação</span><${CampoLocal} valor=${n.local} set=${(x) => set('local', x)} lido=${n.localLido} /></label>
       <div className="grid2">
         <label className="f"><span className="lb">Contrato</span><input className="inp" value=${n.contrato || ''} onChange=${(e) => set('contrato', e.target.value)} /></label>
         <label className="f"><span className="lb">Emissão</span><input className="inp" value=${n.emissao || ''} onChange=${(e) => set('emissao', e.target.value)} placeholder="dd/mm/aaaa" /></label>
@@ -1502,6 +1609,7 @@ function TelaConferencia({ ctx }) {
   return html`<${Tela} ctx=${ctx} eyebrow=${nota.local || 'Local não definido'} titulo=${'NF ' + nota.numero + ' · ' + grupoEmpresa(nota.fornecedor)} voltar=${() => ir('receb')}
       direita=${viagens.length > 0 && html`<button className="hbtn" style=${{ background: 'var(--dark2)', color: '#fff' }} onClick=${() => setFolha({ t: 'relatorio' })}><${Ic} n="doc" s=${16} />Relatório</button>`}>
     <div className="card pad" style=${{ gap: 10 }}>
+      <${LinhaLocal} local=${nota.local} lido=${nota.localLido} podeEditar=${pode(u, 'notas')} aoSalvar=${(v) => trocarLocalNota(nota, v)} />
       <div style=${{ display: 'flex', justifyContent: 'space-between', fontSize: 14, gap: 8 }}><b>Recebido até agora</b><b>${nfmt(recAntes + recAgora)} de ${nfmt(qtdNota)} peças</b></div>
       <div className="bar thin">${viagens.map((v, ix) => { const q = Object.values(v.recebido || {}).reduce((a, b) => a + b, 0); return html`<div key=${ix} style=${{ width: q / Math.max(1, qtdNota) * 100 + '%', background: ix % 2 ? '#2F3B3A' : 'var(--navy)', borderRight: '1px solid #fff' }}></div>`; })}<div style=${{ width: recAgora / Math.max(1, qtdNota) * 100 + '%', background: 'var(--slate)' }}></div></div>
       <div className="t3" style=${{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px' }}>${viagens.map((v, ix) => html`<span key=${ix}>Viagem ${v.n} · ${fmtDataCurta(dataLocal(new Date(v.em)))} · ${nfmt(Object.values(v.recebido || {}).reduce((a, b) => a + b, 0))} pç</span>`)}<span style=${{ fontWeight: 600, color: 'var(--navy)' }}>Viagem ${nv} · agora · ${nfmt(recAgora)} pç</span></div>
@@ -1599,13 +1707,14 @@ function FecharViagem({ ctx, nota, itens, encerrar, forcado, aoFechar, aoConclui
   </${Sheet}>`;
 }
 function DetalheNota({ ctx }) {
-  const { ir, nav } = ctx; useStore();
+  const { ir, nav, usuario: u } = ctx; useStore();
   const nota = store.pegar('notas', nav.p.id); const [rel, setRel] = useState(false);
   if (!nota) return html`<${Tela} ctx=${ctx} titulo="Nota" voltar=${() => ir('receb')}><${Vazio}>Nota não encontrada.</${Vazio}></${Tela}>`;
   const r = resumoNota(nota); const viagens = nota.viagens || [];
   return html`<${Tela} ctx=${ctx} eyebrow=${nota.local || 'Local não definido'} titulo=${'NF ' + nota.numero + ' · ' + grupoEmpresa(nota.fornecedor)} voltar=${() => nav.p.volta ? ir(nav.p.volta.aba, nav.p.volta.tela, nav.p.volta.p) : ir('receb')}
       direita=${['concluida', 'em_conferencia'].includes(nota.status) && html`<button className="hbtn" onClick=${() => setRel(true)}><${Ic} n="doc" s=${16} />Relatório</button>`}>
     <div className="card pad" style=${{ gap: 10 }}>
+      <${LinhaLocal} local=${nota.local} lido=${nota.localLido} podeEditar=${pode(u, 'notas')} aoSalvar=${(v) => trocarLocalNota(nota, v)} />
       <div className="t2">${statusNota(nota.status)[0]} · contrato ${nota.contrato || '—'} · conferente ${nota.conferente || '—'}${nota.concluidaEm ? ' · ' + fmtDataHora(nota.concluidaEm) : ''}</div>
       ${viagens.length > 0 && html`<div className="t3">${viagens.map(v => 'Viagem ' + v.n + ' · ' + fmtDataCurta(dataLocal(new Date(v.em))) + ' · ' + nfmt(Object.values(v.recebido || {}).reduce((a, b) => a + b, 0)) + ' pç · ' + (v.por || '')).join('   |   ')}</div>`}
       <${BarraLocal} r=${r} /><${Num4} r=${r} />
@@ -1616,12 +1725,6 @@ function DetalheNota({ ctx }) {
   </${Tela}>`;
 }
 /* ================= ABA 2 · CD (por local → nota → peça) ================= */
-function locaisTodos() {
-  const ls = (config().locais || []).slice();
-  store.todos('notas').forEach(n => { if (n.local && !ls.includes(n.local)) ls.push(n.local); });
-  locaisComSaldo().forEach(l => { if (!ls.includes(l)) ls.push(l); });
-  return ls;
-}
 // Uma peça de uma nota: onde está cada unidade
 function ItemNF({ i, local, conferido, mostrarNota }) {
   const c = catalogoItem(i.key); const chips = [];
@@ -1738,7 +1841,7 @@ function EnviarDaFrente({ ctx, local, tipo, inicial, hojeRems, aoFechar }) {
     toast(tipo === 'devolucao' ? 'Devolução enviada. O CD confirma ao receber.' : 'Transferência enviada. ' + destino + ' confirma ao receber.'); aoFechar();
   };
   return html`<${Sheet} titulo=${tipo === 'devolucao' ? 'Devolver ao CD' : 'Transferir para outra frente'} aoFechar=${aoFechar} rodape=${html`<button className="btn block" onClick=${enviar}>${tipo === 'devolucao' ? 'Enviar devolução' : 'Enviar transferência'}</button>`}>
-    ${tipo === 'transferencia' && html`<label className="f"><span className="lb">Para qual frente</span><select className="inp" value=${dest} onChange=${(e) => setDest(e.target.value)}><option value="">Selecione…</option>${(config().locais || []).filter(l => l !== local).map(l => html`<option key=${l}>${l}</option>`)}</select></label>`}
+    ${tipo === 'transferencia' && html`<label className="f"><span className="lb">Para qual frente</span><select className="inp" value=${dest} onChange=${(e) => setDest(e.target.value)}><option value="">Selecione…</option>${locaisTodos().filter(l => l !== local).map(l => html`<option key=${l}>${l}</option>`)}</select></label>`}
     ${tipo === 'devolucao' && hojeRems && hojeRems.length > 0 && html`<button className="btn soft sm" onClick=${preencherHoje}>Preencher com o que chegou hoje (vai e volta)</button>`}
     <div className="hint">Só peças soltas (não montadas). ${tipo === 'devolucao' ? 'Ficam em trânsito até o almoxarife confirmar.' : 'Ficam em trânsito até a outra frente confirmar.'} O app mantém a nota de origem de cada peça.</div>
     <div>${res.filter(r => r.aguardando > 0).map(r => html`<div key=${r.key} className="row" style=${{ padding: '12px 0' }}><div className="grow"><div className="t1">${r.desc}</div><div className="t2">${r.aguardando} soltas</div></div><${Stepper} valor=${qt[r.key] || 0} max=${r.aguardando} set=${(v) => setQt(Object.assign({}, qt, { [r.key]: Math.min(Number(v) || 0, r.aguardando) }))} /></div>`)}</div>
@@ -1878,7 +1981,8 @@ function VerProjeto({ ctx }) {
   };
   const tocarPlanta = (e) => { if (!marcar) return; const r = e.currentTarget.getBoundingClientRect(); setNovoPt({ x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }); };
   const alternar = (pt) => { const pontos = ptsAll.map(x => x.id === pt.id ? Object.assign({}, x, { montado: !x.montado, em: agoraISO(), por: u.nome }) : x); store.gravar('projetos', Object.assign({}, proj, { pontos })); setPtAberto(null); };
-  return html`<${Tela} ctx=${ctx} eyebrow=${proj.local} titulo=${proj.nome} voltar=${voltar}>
+  return html`<${Tela} ctx=${ctx} eyebrow=${proj.local || 'Local não definido'} titulo=${proj.nome} voltar=${voltar}>
+    <div className="card pad" style=${{ padding: '12px 16px' }}><${LinhaLocal} local=${proj.local} lido=${proj.localLido} podeEditar=${pode(u, 'projetos') || pode(u, 'notas')} aoSalvar=${(v) => store.gravar('projetos', Object.assign({}, store.pegar('projetos', proj.id), { local: v }))} /></div>
     ${proj.obs && html`<div className="note y">${proj.obs}</div>`}
     ${proj.tipo === 'dwg' ? html`<div className="card pad">
       <div className="t1">${proj.dwg.nome}</div><div className="t2">${(proj.dwg.tamanho / 1048576).toFixed(1).replace('.', ',')} MB · enviado por ${proj.criadoPor || '—'} em ${fmtDataHora(proj.criadoEm)}</div>
@@ -2157,8 +2261,10 @@ function TelaConfig({ ctx }) {
   const usuarios = store.todos('usuarios').sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
   return html`<${Tela} ctx=${ctx} eyebrow="Escritório" titulo="Configurações" voltar=${() => ir('gestao')}>
     <div className="card pad"><b>Locais da aplicação / frentes</b>
-      <div className="tags">${(cfg.locais || []).map(l => html`<span key=${l} className="tag g" style=${{ fontSize: 14, padding: '6px 6px 6px 12px', display: 'inline-flex', alignItems: 'center', gap: 2 }}>${l}<button aria-label=${'Remover ' + l} style=${{ border: 'none', background: 'none', fontSize: 18, lineHeight: 1, padding: '0 6px' }} onClick=${() => confirm('Remover ' + l + '?') && salvarCfg({ locais: cfg.locais.filter(x => x !== l) })}>×</button></span>`)}</div>
-      <div style=${{ display: 'flex', gap: 8 }}><input className="inp" value=${novoLocal} onChange=${(e) => setNovoLocal(e.target.value)} placeholder="Novo local" /><button className="btn soft sm" onClick=${() => { if (novoLocal.trim()) { salvarCfg({ locais: (cfg.locais || []).concat([novoLocal.trim()]) }); setNovoLocal(''); } }}>Adicionar</button></div></div>
+      <div className="hint" style=${{ padding: 0 }}>A lista se forma sozinha com os locais lidos nas notas e projetos e os que as pessoas digitam. Só dá para remover local que não está em uso.</div>
+      <div className="tags">${locaisTodos().map(l => { const emUso = store.todos('notas').some(n => n.local === l) || store.todos('projetos').some(p => p.local === l) || locaisComSaldo().includes(l);
+        return html`<span key=${l} className="tag g" style=${{ fontSize: 14, padding: '6px ' + (emUso ? '12px' : '6px') + ' 6px 12px', display: 'inline-flex', alignItems: 'center', gap: 2 }}>${l}${!emUso && html`<button aria-label=${'Remover ' + l} style=${{ border: 'none', background: 'none', fontSize: 18, lineHeight: 1, padding: '0 6px' }} onClick=${() => confirm('Remover ' + l + '?') && salvarCfg({ locais: (cfg.locais || []).filter(x => x !== l), locaisManuais: (cfg.locaisManuais || []).filter(x => x !== l) })}>×</button>`}</span>`; })}</div>
+      <div style=${{ display: 'flex', gap: 8 }}><input className="inp" value=${novoLocal} onChange=${(e) => setNovoLocal(e.target.value)} placeholder="Novo local" /><button className="btn soft sm" onClick=${() => { if (novoLocal.trim()) { registrarLocal(novoLocal.trim()); setNovoLocal(''); } }}>Adicionar</button></div></div>
     <div className="card pad"><b>Fornecedores</b>
       <div className="tags">${(cfg.fornecedores || []).map(f => html`<span key=${f} className="tag g" style=${{ fontSize: 14, padding: '6px 12px' }}>${f}</span>`)}</div>
       <div style=${{ display: 'flex', gap: 8 }}><input className="inp" value=${novoForn} onChange=${(e) => setNovoForn(e.target.value)} placeholder="Novo fornecedor" /><button className="btn soft sm" onClick=${() => { if (novoForn.trim()) { salvarCfg({ fornecedores: (cfg.fornecedores || []).concat([novoForn.trim()]) }); setNovoForn(''); } }}>Adicionar</button></div></div>
@@ -2205,7 +2311,7 @@ function App() {
           if (!perfil) { setMsg(navigator.onLine ? 'Seu acesso ainda não foi liberado. Peça ao escritório para cadastrar o seu e-mail (' + email + ').' : 'Sem internet. Na primeira vez em cada celular é preciso entrar com internet; depois o app abre sem sinal.'); setEstado('bloqueado'); return; }
           if (!PERFIS[perfil.perfil]) perfil = Object.assign({}, perfil, { perfil: 'gestor' });
           try { localStorage.setItem(LSP, JSON.stringify(perfil)); } catch (e) {}
-          if (servidorRespondeu) fsdb.collection('config').doc('geral').get().then(c => { if (!c.exists && !c.metadata.fromCache) fsdb.collection('config').doc('geral').set({ id: 'geral', locais: LOCAIS_PADRAO.slice(), fornecedores: FORNECEDORES_PADRAO.slice() }); }).catch(() => {});
+          if (servidorRespondeu) fsdb.collection('config').doc('geral').get().then(c => { if (!c.exists && !c.metadata.fromCache) fsdb.collection('config').doc('geral').set({ id: 'geral', locais: [], fornecedores: FORNECEDORES_PADRAO.slice() }); }).catch(() => {});
           setUsuario(perfil); setEstado('pronto');
         });
       } catch (e) { setMsg(navigator.onLine ? 'Não foi possível abrir o app: ' + e.message : 'Sem internet, e este celular ainda não tem o app guardado. Abra uma vez com internet; depois ele funciona sem sinal.'); setEstado('erro'); }
