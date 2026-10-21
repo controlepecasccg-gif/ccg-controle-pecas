@@ -1393,7 +1393,7 @@ function DefinirLocal({ titulo, inicial, lido, texto, aoFechar, aoSalvar }) {
 }
 // Troca o local de uma nota e leva junto o que veio com ela: outras notas do mesmo arquivo e os projetos ligados
 function trocarLocalNota(nota, novo) {
-  const velho = nota.local; const ops = [{ c: 'notas', doc: Object.assign({}, store.pegar('notas', nota.id), { local: novo }) }];
+  const velho = nota.local; const atual = store.pegar('notas', nota.id) || nota; const ops = [{ c: 'notas', doc: Object.assign({}, atual, { local: novo }, ['em_conferencia', 'concluida'].includes(atual.status) ? { drive: { ok: false }, drivePendente: true } : {}) }];
   if (velho && norm(velho) !== norm(novo)) {
     const t0 = new Date(nota.criadoEm || 0).getTime(), perto = (x) => Math.abs(new Date(x.criadoEm || 0).getTime() - t0) < 15 * 60000;
     store.todos('notas').filter(n => n.id !== nota.id && n.local === velho && n.arquivo && n.arquivo === nota.arquivo && perto(n)).forEach(n => ops.push({ c: 'notas', doc: Object.assign({}, n, { local: novo }) }));
@@ -1767,7 +1767,7 @@ function FecharViagem({ ctx, nota, itens, encerrar, forcado, aoFechar, aoConclui
     const ops = []; const recebido = {};
     agora.forEach(i => { recebido[i.key] = i.agora; ops.push(movimento('entrada', i.key, i.agora, 'NF', 'CD', nota.id, nome, { nf: nota.id, viagem: nv })); });
     const viagens = (nota.viagens || []).concat(qAgora || !(nota.viagens || []).length ? [{ n: nv, em: agoraISO(), por: nome, recebido }] : []);
-    const doc = Object.assign({}, nota, { viagens, contagem: {}, status: 'em_conferencia', conferente: nome });
+    const doc = Object.assign({}, nota, { viagens, contagem: {}, status: 'em_conferencia', conferente: nome, drive: { ok: false }, drivePendente: true });
     if (assin === 'sim' && (sigConf || sigMot)) doc.assinaturas = (nota.assinaturas || []).concat([{ viagem: qAgora || !(nota.viagens || []).length ? nv : null, encerramento: !!encerrar, em: agoraISO(), confNome: nome, conf: sigConf, motNome: motNome.trim(), mot: sigMot }]);
     if (encerrar) {
       aindaVem.forEach(i => ops.push({ c: 'pendencias', doc: { id: uid('pd'), tipo: 'falta', origem: 'NF ' + nota.numero, ref: nota.id, local: 'Recebimento', key: i.key, qtd: i.falta, valor: i.falta * (i.vu || 0), status: 'aberta', criadoEm: agoraISO(), criadoPor: nome, obs: 'Nota ' + i.qtd + ', chegaram ' + i.tot } }));
@@ -1861,7 +1861,7 @@ function CorrigirConferencia({ ctx }) {
     const base = (nota.viagens || []).length ? nota.viagens : [{ n: 1, em: nota.concluidaEm || nota.criadoEm || em, por: nota.conferente || '', recebido: antes }];
     const snap = { rev, viagens: base, assinaturas: assAtual, concluidaEm: nota.corrigidaEm || nota.concluidaEm, conferente: nota.conferente, motivo: nota.motivoRevisao || '', substituidaEm: em, substituidaPor: nova };
     const nv = base.length + 1;
-    const doc = Object.assign({}, nota, { revisao: nova, revisoes: (nota.revisoes || []).concat([snap]), corrigidaEm: em, motivoRevisao: motivo.trim(), conferente: confNome,
+    const doc = Object.assign({}, nota, { revisao: nova, revisoes: (nota.revisoes || []).concat([snap]), corrigidaEm: em, motivoRevisao: motivo.trim(), conferente: confNome, drive: { ok: false }, drivePendente: true,
       viagens: base.concat([{ n: nv, em, por: confNome, recebido: dif, correcao: nova }]), contagem: {},
       assinaturas: (nota.assinaturas || []).concat([{ revisao: nova, encerramento: true, em, confNome, conf: sigConf, motNome: repNome.trim(), mot: sigRep }]) });
     ops.push({ c: 'notas', doc }); store.gravarVarios(ops);
@@ -2659,6 +2659,7 @@ function ajustarDadosAntigos(u) { // termos sem descrição/pastas e pedidos do 
     termo.pastas = pastasTermo({ termo, destino: r.destino }); termo.nfsTxt = [...new Set(termo.itens.flatMap(i => Object.keys(i.nfs || {})))].map(nomeNF).join(', ');
     ops.push({ c: 'remessas', doc: Object.assign({}, r, { termo, drive: { ok: false }, drivePendente: true }) });
   });
+  store.todos('notas').filter(n => ['em_conferencia', 'concluida'].includes(n.status) && !n.drive).forEach(n => ops.push({ c: 'notas', doc: Object.assign({}, n, { drive: { ok: false }, drivePendente: true }) }));
   if (ops.length) store.gravarVarios(ops);
 }
 /* ================= ABA 4 · GESTÃO ================= */
