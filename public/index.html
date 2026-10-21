@@ -1098,8 +1098,8 @@ function SelLocal({ valor, set, id, incluirCD, vazio }) {
     <option value="">${vazio || 'Selecione…'}</option>${incluirCD && html`<option value="CD">CD (centro de distribuição)</option>`}${ls.map(l => html`<option key=${l} value=${l}>${l}</option>`)}</select>`;
 }
 // Frente de serviço: lista (abre a lista do celular) e "Outro (especificar)" para quem não achar, igual ao app do TST
-function CampoLocal({ valor, set, lido, autoFocus }) {
-  const ls = locaisTodos().slice().sort((a, b) => a.localeCompare(b, 'pt-BR'));
+function CampoLocal({ valor, set, lido, autoFocus, excluir }) {
+  const ls = locaisTodos().filter(l => !excluir || norm(l) !== norm(excluir)).sort((a, b) => a.localeCompare(b, 'pt-BR'));
   const naLista = (v) => ls.find(l => norm(l) === norm(v));
   const [outro, setOutro] = useState(() => !!valor && !naLista(valor));
   const sel = outro ? '__outro__' : (naLista(valor) || '');
@@ -1994,13 +1994,13 @@ function EnviarDaFrente({ ctx, local, tipo, inicial, hojeRems, aoFechar }) {
   const enviar = () => {
     const itens = Object.keys(qt).filter(k => Number(qt[k]) > 0).map(k => ({ key: k, qtd: Number(qt[k]), enviado: Number(qt[k]) }));
     if (!itens.length) return toast('Informe as quantidades.');
-    const destino = tipo === 'devolucao' ? 'CD' : dest; if (!destino) return toast('Escolha a frente de destino.');
+    const destino = tipo === 'devolucao' ? 'CD' : dest; if (!destino) return toast('Escolha a frente de destino.'); if (tipo !== 'devolucao') registrarLocal(destino);
     const rem = { id: uid('rm'), numero: proximoNumero(tipo === 'devolucao' ? 'DV' : 'TF'), tipo, origem: local, destino, dataUso: hoje(), itens, status: 'solicitado', solicitante: u.nome, criadoEm: agoraISO(), historico: [{ st: 'solicitado', em: agoraISO(), por: u.nome }] };
     despacharRemessa(rem, u, 'em_transito');
     toast(tipo === 'devolucao' ? 'Devolução enviada. O CD confirma ao receber.' : 'Transferência enviada. ' + destino + ' confirma ao receber.'); aoFechar();
   };
   return html`<${Sheet} titulo=${tipo === 'devolucao' ? 'Devolver ao CD' : 'Transferir para outra frente'} aoFechar=${aoFechar} rodape=${html`<button className="btn block" onClick=${enviar}>${tipo === 'devolucao' ? 'Enviar devolução' : 'Enviar transferência'}</button>`}>
-    ${tipo === 'transferencia' && html`<label className="f"><span className="lb">Para qual frente</span><select className="inp" value=${dest} onChange=${(e) => setDest(e.target.value)}><option value="">Selecione…</option>${locaisTodos().filter(l => l !== local).map(l => html`<option key=${l}>${l}</option>`)}</select></label>`}
+    ${tipo === 'transferencia' && html`<div className="f"><span className="lb">Para qual frente</span><${CampoLocal} valor=${dest} set=${setDest} excluir=${local} /></div>`}
     ${tipo === 'devolucao' && hojeRems && hojeRems.length > 0 && html`<button className="btn soft sm" onClick=${preencherHoje}>Preencher com o que chegou hoje (vai e volta)</button>`}
     <div className="hint">Só peças soltas (não montadas). ${tipo === 'devolucao' ? 'Ficam em trânsito até o almoxarife confirmar.' : 'Ficam em trânsito até a outra frente confirmar.'} O app mantém a nota de origem de cada peça.</div>
     <div>${res.filter(r => r.aguardando > 0).map(r => html`<div key=${r.key} className="row" style=${{ padding: '12px 0' }}><div className="grow"><div className="t1">${r.desc}</div><div className="t2">${r.aguardando} soltas</div></div><${Stepper} valor=${qt[r.key] || 0} max=${r.aguardando} set=${(v) => setQt(Object.assign({}, qt, { [r.key]: Math.min(Number(v) || 0, r.aguardando) }))} /></div>`)}</div>
@@ -2044,7 +2044,6 @@ function ContagemDia({ ctx }) {
   };
   const bt = (on) => ({ minHeight: 42, padding: '0 14px', borderRadius: 999, fontSize: 13, fontWeight: 600, border: 'none', background: on ? 'var(--navy)' : 'var(--bg)', color: on ? '#fff' : 'var(--navy)' });
   return html`<${Tela} ctx=${ctx} eyebrow=${local + ' · ' + diaSemana(H) + ' ' + fmtDataCurta(H)} titulo="Contagem do dia" voltar=${() => ir('cd', 'local', { local })}>
-    <p className="hint" style=${{ margin: 0, fontSize: 14 }}>Conte só as peças <b style=${{ color: 'var(--navy)' }}>soltas</b>. As montadas o app calcula (montadas = saldo − soltas).</p>
     ${linhas.length ? linhas.map(l => html`<div key=${l.key} className="card pad">
       <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}><span className="t1">${l.desc}</span><span className="t3" style=${{ whiteSpace: 'nowrap' }}>saldo ${l.total}</span></div>
       <div style=${{ display: 'flex', alignItems: 'center', gap: 10 }}><span className="t2" style=${{ flex: 1 }}>Soltas<br/>esperadas ${l.aguardando}</span><${Stepper} valor=${sol[l.key]} set=${(v) => setSol(Object.assign({}, sol, { [l.key]: v }))} /></div>
