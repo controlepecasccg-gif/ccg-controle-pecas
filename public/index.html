@@ -92,7 +92,7 @@ button.row{min-height:60px}
 .chev{color:var(--hint);font-size:20px;flex:none}
 .dot{width:10px;height:10px;border-radius:999px;flex:none;display:inline-block}
 .grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-.num4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}
+.num4{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
 .num4 > span{display:flex;flex-direction:column;min-width:0}
 .num4 b{font-size:16px;font-weight:700}
 .num4 .t3{display:flex;align-items:center;gap:4px;white-space:nowrap}
@@ -1097,14 +1097,18 @@ function SelLocal({ valor, set, id, incluirCD, vazio }) {
   return html`<select id=${id} className="inp" value=${valor || ''} onChange=${(e) => set(e.target.value)} style=${{ fontWeight: 600 }}>
     <option value="">${vazio || 'Selecione…'}</option>${incluirCD && html`<option value="CD">CD (centro de distribuição)</option>`}${ls.map(l => html`<option key=${l} value=${l}>${l}</option>`)}</select>`;
 }
-// Local da aplicação: digita livre ou escolhe um que já existe
+// Frente de serviço: lista (abre a lista do celular) e "Outro (especificar)" para quem não achar, igual ao app do TST
 function CampoLocal({ valor, set, lido, autoFocus }) {
-  const id = useMemo(() => uid('dl'), []); const ls = locaisTodos();
-  return html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-    <input className="inp" list=${id} autoFocus=${autoFocus} value=${valor || ''} placeholder="Digite ou escolha (ex.: Passagem de emergência 15)" onChange=${(e) => set(e.target.value)} onBlur=${(e) => set(e.target.value.replace(/\s+/g, ' ').trim())} style=${{ fontWeight: 600 }} />
-    <datalist id=${id}>${ls.map(l => html`<option key=${l} value=${l} />`)}</datalist>
-    ${lido && norm(lido) !== norm(valor) && html`<span className="t3">Lido no arquivo: "${lido}" · <button className="link" style=${{ padding: 0, fontSize: 11 }} onClick=${() => set(lido)}>usar este</button></span>`}
-    ${ls.length > 0 && html`<div className="chips" style=${{ gap: 6 }}>${ls.filter(l => norm(l) !== norm(valor)).slice(0, 6).map(l => html`<button key=${l} type="button" className="chip" style=${{ minHeight: 34, fontSize: 12 }} onClick=${() => set(l)}>${l}</button>`)}</div>`}
+  const ls = locaisTodos().slice().sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  const naLista = (v) => ls.find(l => norm(l) === norm(v));
+  const [outro, setOutro] = useState(() => !!valor && !naLista(valor));
+  const sel = outro ? '__outro__' : (naLista(valor) || '');
+  const escolher = (v) => { if (v === '__outro__') { setOutro(true); set(lido && !naLista(lido) ? lido : ''); } else { setOutro(false); set(v); } };
+  return html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <select className="inp" value=${sel} autoFocus=${autoFocus} onChange=${(e) => escolher(e.target.value)} style=${{ fontWeight: 600 }}>
+      <option value="">Selecione…</option>${ls.map(l => html`<option key=${l} value=${l}>${l}</option>`)}<option value="__outro__">Outro (especificar)</option></select>
+    ${outro && html`<input className="inp" autoFocus value=${valor || ''} placeholder="Descreva a frente de serviço" onChange=${(e) => set(e.target.value)} onBlur=${(e) => set(e.target.value.replace(/\s+/g, ' ').trim())} />`}
+    ${lido && norm(lido) !== norm(valor) && html`<span className="t3">Lido no arquivo: "${lido}" · <button type="button" className="link" style=${{ padding: 0, fontSize: 11 }} onClick=${() => { const l = naLista(lido); setOutro(!l); set(l || lido); }}>usar este</button></span>`}
   </div>`;
 }
 function useOnline() {
@@ -1118,14 +1122,14 @@ function NetPill({ soAlerta }) {
   if (store.modo === 'demo') return html`<span className=${'pill' + (on ? '' : ' off')}>Demo</span>`;
   return html`<span className=${'pill' + (on && !p ? '' : ' off')}>${on ? (p ? 'Enviando…' : 'Online') : 'Offline' + (p ? ' · ' + p : '')}</span>`;
 }
-// barra empilhada CD / aguardando / montadas / falta
+// barra: no CD / na frente de serviço / em falta
 function BarraLocal({ r }) {
-  const t = Math.max(1, r.cd + r.ag + r.mo + r.falta + (r.transito || 0));
-  return html`<div className="bar"><div style=${{ width: r.cd / t * 100 + '%', background: CORES.cd }}></div><div style=${{ width: (r.transito || 0) / t * 100 + '%', background: CORES.tr }}></div><div style=${{ width: r.ag / t * 100 + '%', background: CORES.ag }}></div><div style=${{ width: r.mo / t * 100 + '%', background: CORES.mo }}></div><div style=${{ width: r.falta / t * 100 + '%', background: CORES.fa }}></div></div>`;
+  const fr = r.ag + r.mo + (r.transito || 0); const t = Math.max(1, r.cd + fr + r.falta);
+  return html`<div className="bar"><div style=${{ width: r.cd / t * 100 + '%', background: CORES.cd }}></div><div style=${{ width: fr / t * 100 + '%', background: CORES.mo }}></div><div style=${{ width: r.falta / t * 100 + '%', background: CORES.fa }}></div></div>`;
 }
 function Num4({ r }) {
   const it = (v, l, c, cor) => html`<span><b style=${{ color: cor || 'inherit' }}>${nfmt(v)}</b><span className="t3"><span className="sw" style=${{ background: c }}></span>${l}</span></span>`;
-  return html`<div className="num4">${it(r.cd, 'no CD', CORES.cd)}${it(r.ag, 'aguardando', CORES.ag)}${it(r.mo, 'montadas', CORES.mo)}${it(r.falta, 'em falta', CORES.fa, r.falta ? 'var(--mag-t)' : null)}</div>`;
+  return html`<div className="num4">${it(r.cd, 'no CD', CORES.cd)}${it(r.ag + r.mo + (r.transito || 0), 'na frente', CORES.mo)}${it(r.falta, 'em falta', CORES.fa, r.falta ? 'var(--mag-t)' : null)}</div>`;
 }
 
 /* ---------------- escolher peça do catálogo ---------------- */
@@ -1240,7 +1244,7 @@ function contarBadges(u) {
   return b;
 }
 const TELAS_ABA = () => ({
-  receb: { '': TelaRecebimento, empresa: TelaEmpresa, revisar: RevisarNota, conferir: TelaConferencia, nota: DetalheNota },
+  receb: { '': TelaRecebimento, empresa: TelaEmpresa, revisar: RevisarNota, conferir: TelaConferencia, nota: DetalheNota, corrigir: CorrigirConferencia },
   cd: { '': TelaCD, local: TelaLocal, contagem: ContagemDia, receber: TelaReceberRemessa, projetos: TelaProjetos, projeto: VerProjeto, baias: TelaBaias },
   pedidos: { '': TelaPedidos, novo: NovoPedido, separar: SepararPedido, retirada: TelaRetirada, devolucao: TelaDevolucao, termo: TelaTermo, receber: TelaReceberRemessa },
   gestao: { '': TelaGestao, catalogo: TelaCatalogo, config: TelaConfig, pendencias: TelaPendencias }
@@ -1264,7 +1268,7 @@ function Casca({ usuario, sair, trocarPerfil }) {
   const fecharInst = () => { setInst(false); try { localStorage.setItem('ccg_inst_off', String(Date.now())); } catch (e) {} };
   const ctx = { usuario, ir, nav, abrirMenu: () => setMenu(true) };
   const T = (TELAS_ABA()[nav.aba] || {})[nav.tela] || TELAS_ABA()[nav.aba][''];
-  const badges = contarBadges(usuario);
+  const badges = contarBadges(usuario); useEffect(() => { const t = setTimeout(() => ajustarDadosAntigos(usuario), 3000); return () => clearTimeout(t); }, []);
   return html`<div className="app">
     <${T} key=${nav.aba + nav.tela + JSON.stringify(nav.p)} ctx=${ctx} />
     <aside className="side" aria-label="Menu">
@@ -1789,14 +1793,14 @@ function FecharViagem({ ctx, nota, itens, encerrar, forcado, aoFechar, aoConclui
       ${assin === 'nao' && html`<span className="t3">O relatório sai sem o campo de assinaturas.</span>`}
     </div>
     ${assin === 'sim' && html`<${Assinatura} rotulo=${'Conferente · ' + (nome || '')} valor=${sigConf} set=${setSigConf} />
-      <label className="f"><span className="lb">Motorista / representante ${grupoEmpresa(nota.fornecedor)}</span><input className="inp" placeholder="Nome (opcional)" value=${motNome} onChange=${(e) => setMotNome(e.target.value)} /></label>
-      <${Assinatura} rotulo="Assinatura do motorista" valor=${sigMot} set=${setSigMot} />
+      <label className="f"><span className="lb">Representante da ${grupoEmpresa(nota.fornecedor)}</span><input className="inp" placeholder="Nome (opcional)" value=${motNome} onChange=${(e) => setMotNome(e.target.value)} /></label>
+      <${Assinatura} rotulo=${"Assinatura do representante da " + grupoEmpresa(nota.fornecedor)} valor=${sigMot} set=${setSigMot} />
       <span className="t3">Pode assinar só um dos dois. As assinaturas aparecem no PDF desta conferência.</span>`}
   </${Sheet}>`;
 }
 function DetalheNota({ ctx }) {
   const { ir, nav, usuario: u } = ctx; useStore();
-  const nota = store.pegar('notas', nav.p.id); const [rel, setRel] = useState(false);
+  const nota = store.pegar('notas', nav.p.id); const [rel, setRel] = useState(false); const [relAnt, setRelAnt] = useState(null);
   if (!nota) return html`<${Tela} ctx=${ctx} titulo="Nota" voltar=${() => ir('receb')}><${Vazio}>Nota não encontrada.</${Vazio}></${Tela}>`;
   const r = resumoNota(nota); const viagens = nota.viagens || [];
   return html`<${Tela} ctx=${ctx} eyebrow=${nota.local || 'Local não definido'} titulo=${'NF ' + nota.numero + ' · ' + grupoEmpresa(nota.fornecedor)} voltar=${() => nav.p.volta ? ir(nav.p.volta.aba, nav.p.volta.tela, nav.p.volta.p) : ir('receb')}
@@ -1804,12 +1808,79 @@ function DetalheNota({ ctx }) {
     <div className="card pad" style=${{ gap: 10 }}>
       <${LinhaLocal} local=${nota.local} lido=${nota.localLido} podeEditar=${pode(u, 'notas')} aoSalvar=${(v) => trocarLocalNota(nota, v)} />
       <div className="t2">${statusNota(nota.status)[0]} · contrato ${nota.contrato || '—'} · conferente ${nota.conferente || '—'}${nota.concluidaEm ? ' · ' + fmtDataHora(nota.concluidaEm) : ''}</div>
-      ${viagens.length > 0 && html`<div className="t3">${viagens.map(v => 'Viagem ' + v.n + ' · ' + fmtDataCurta(dataLocal(new Date(v.em))) + ' · ' + nfmt(Object.values(v.recebido || {}).reduce((a, b) => a + b, 0)) + ' pç · ' + (v.por || '')).join('   |   ')}</div>`}
+      ${viagens.length > 0 && html`<div className="t3">${viagens.map(v => (v.correcao ? 'Correção rev. ' + v.correcao : 'Viagem ' + v.n) + ' · ' + fmtDataCurta(dataLocal(new Date(v.em))) + ' · ' + nfmt(Object.values(v.recebido || {}).reduce((a, b) => a + b, 0)) + ' pç · ' + (v.por || '')).join('   |   ')}</div>`}
       <${BarraLocal} r=${r} /><${Num4} r=${r} />
     </div>
+    ${nota.status === 'concluida' && pode(u, 'notas') && html`<button className="btn white sm" onClick=${() => ir('receb', 'corrigir', { id: nota.id })}><${Ic} n="M4 20h4L19 9l-4-4L4 16zM14 6l4 4" s=${18} />Corrigir conferência</button>`}
+    ${(nota.revisoes || []).length > 0 && html`<div className="card">${[{ atual: true, rev: nota.revisao || 1, em: nota.corrigidaEm || nota.concluidaEm, motivo: nota.motivoRevisao }].concat(nota.revisoes.slice().reverse()).map(v => html`<button key=${v.rev} className="row" onClick=${() => v.atual ? setRel(true) : setRelAnt(notaDaRevisao(nota, v))}>
+      <span className="grow"><div className="t1">Revisão ${v.rev} ${v.atual ? '· válida' : '· obsoleta'}</div><div className="t2">${v.em ? fmtDataHora(v.em) : ''}${v.atual && v.motivo ? ' · ' + v.motivo : ''}${!v.atual ? ' · substituída em ' + fmtDataHora(v.substituidaEm) : ''}</div></span>
+      <span className=${'tag ' + (v.atual ? 'ok' : 'g')}>${v.atual ? 'atual' : 'obsoleta'}</span><span className="chev">›</span></button>`)}</div>`}
     <div className="sec">Peças da nota <span className="t2">${plural(nota.itens.length, 'item', 'itens')} · ${nfmt(r.qtd)} pç</span></div>
     <div className="card">${r.itens.map(i => html`<${ItemNF} key=${i.key} i=${i} local=${nota.local} />`)}</div>
     ${rel && html`<${CompartilharRelatorio} nota=${nota} aoFechar=${() => setRel(false)} />`}
+    ${relAnt && html`<${CompartilharRelatorio} nota=${relAnt} aoFechar=${() => setRelAnt(null)} />`}
+  </${Tela}>`;
+}
+
+/* ---------- correção da conferência depois de fechada ----------
+   Cria uma nova revisão: a anterior fica guardada como OBSOLETA (o relatório dela sai com essa marca).
+   Pede de novo a assinatura de quem confere e, se na anterior o representante da empresa assinou, a dele também. */
+function notaDaRevisao(nota, v) {
+  return Object.assign({}, nota, { viagens: v.viagens || [], contagem: {}, assinaturas: v.assinaturas || [], status: 'concluida', concluidaEm: v.concluidaEm || nota.concluidaEm,
+    conferente: v.conferente || nota.conferente, revisao: v.rev, obsoleta: true, substituidaEm: v.substituidaEm, substituidaPor: v.substituidaPor });
+}
+function CorrigirConferencia({ ctx }) {
+  const { ir, nav, usuario: u } = ctx; useStore();
+  const nota = store.pegar('notas', nav.p.id);
+  const antes = nota ? recebidoNota(nota) : {};
+  const [qt, setQt] = useState(() => { const o = {}; (nota ? nota.itens : []).forEach(i => o[i.key] = antes[i.key] || 0); return o; });
+  const [motivo, setMotivo] = useState(''); const [confNome, setConfNome] = useState(u.nome); const [sigConf, setSigConf] = useState(null);
+  const [repNome, setRepNome] = useState(''); const [sigRep, setSigRep] = useState(null); const [feito, setFeito] = useState(null);
+  if (feito) return html`<${Tela} ctx=${ctx} titulo="Conferência corrigida" voltar=${() => ir('receb', 'nota', { id: feito.id })}><${CompartilharRelatorio} nota=${feito} concluiu=${true} aoFechar=${() => ir('receb', 'nota', { id: feito.id })} /></${Tela}>`;
+  if (!nota || nota.status !== 'concluida') return html`<${Tela} ctx=${ctx} titulo="Corrigir" voltar=${() => ir('receb')}><${Vazio}>Só dá para corrigir nota com conferência fechada.</${Vazio}></${Tela}>`;
+  const rev = nota.revisao || 1;
+  const assAtual = (nota.assinaturas || []).filter(a => (a.revisao || 1) === rev);
+  const precisaRep = assAtual.some(a => a.mot); const repAnt = (assAtual.find(a => a.mot) || {}).motNome || '';
+  const empresa = grupoEmpresa(nota.fornecedor);
+  const mud = nota.itens.filter(i => (Number(qt[i.key]) || 0) !== (antes[i.key] || 0));
+  const confirmar = () => {
+    if (!mud.length) return toast('Nenhuma quantidade foi alterada.');
+    if (!motivo.trim()) return toast('Escreva o motivo da correção.');
+    if (!sigConf) return toast('Falta a assinatura de quem está conferindo.');
+    if (precisaRep && !sigRep) return toast('Falta a assinatura do representante da ' + empresa + ' (ele assinou a conferência anterior).');
+    const em = agoraISO(); const nova = rev + 1; const ops = []; const dif = {};
+    mud.forEach(i => { const dq = (Number(qt[i.key]) || 0) - (antes[i.key] || 0); dif[i.key] = dq;
+      if (dq > 0) ops.push(movimento('entrada', i.key, dq, 'NF', 'CD', nota.id, confNome, { nf: nota.id, correcao: nova }));
+      else ops.push(movimento('correcao', i.key, -dq, 'CD', 'NF', nota.id, confNome, { nf: nota.id, correcao: nova })); });
+    // pendências abertas desta nota são substituídas pelas da nova revisão
+    store.todos('pendencias').filter(p => p.ref === nota.id && p.status === 'aberta').forEach(p => ops.push({ c: 'pendencias', doc: Object.assign({}, p, { status: 'substituida', resolvidaEm: em, resolvidaPor: confNome, obs: (p.obs ? p.obs + ' · ' : '') + 'Substituída pela revisão ' + nova + ' da conferência' }) }));
+    nota.itens.forEach(i => { const q = Number(qt[i.key]) || 0;
+      if (q < i.qtd) ops.push({ c: 'pendencias', doc: { id: uid('pd'), tipo: 'falta', origem: 'NF ' + nota.numero + ' · rev. ' + nova, ref: nota.id, local: 'Recebimento', key: i.key, qtd: i.qtd - q, valor: (i.qtd - q) * (i.vu || 0), status: 'aberta', criadoEm: em, criadoPor: confNome, obs: 'Nota ' + i.qtd + ', chegaram ' + q } });
+      if (q > i.qtd) ops.push({ c: 'pendencias', doc: { id: uid('pd'), tipo: 'sobra', origem: 'NF ' + nota.numero + ' · rev. ' + nova, ref: nota.id, local: 'Recebimento', key: i.key, qtd: q - i.qtd, valor: 0, status: 'aberta', criadoEm: em, criadoPor: confNome, obs: 'Nota ' + i.qtd + ', chegaram ' + q } }); });
+    // notas antigas guardavam a contagem sem viagens: vira a "viagem 1" para o histórico ficar completo
+    const base = (nota.viagens || []).length ? nota.viagens : [{ n: 1, em: nota.concluidaEm || nota.criadoEm || em, por: nota.conferente || '', recebido: antes }];
+    const snap = { rev, viagens: base, assinaturas: assAtual, concluidaEm: nota.corrigidaEm || nota.concluidaEm, conferente: nota.conferente, motivo: nota.motivoRevisao || '', substituidaEm: em, substituidaPor: nova };
+    const nv = base.length + 1;
+    const doc = Object.assign({}, nota, { revisao: nova, revisoes: (nota.revisoes || []).concat([snap]), corrigidaEm: em, motivoRevisao: motivo.trim(), conferente: confNome,
+      viagens: base.concat([{ n: nv, em, por: confNome, recebido: dif, correcao: nova }]), contagem: {},
+      assinaturas: (nota.assinaturas || []).concat([{ revisao: nova, encerramento: true, em, confNome, conf: sigConf, motNome: repNome.trim(), mot: sigRep }]) });
+    ops.push({ c: 'notas', doc }); store.gravarVarios(ops);
+    toast('Revisão ' + nova + ' salva. A anterior ficou obsoleta.'); setFeito(doc);
+  };
+  return html`<${Tela} ctx=${ctx} eyebrow=${'Corrigir · revisão ' + (rev + 1)} titulo=${'NF ' + nota.numero + ' · ' + empresa} voltar=${() => ir('receb', 'nota', { id: nota.id })}>
+    <div className="note y">A conferência de ${fmtDataHora(nota.corrigidaEm || nota.concluidaEm)} vai ficar <b>obsoleta</b> e o app gera uma nova (revisão ${rev + 1}). Precisa assinar de novo.</div>
+    <div className="sec">Quantidade que chegou<span className="t2">${mud.length ? plural(mud.length, 'item alterado', 'itens alterados') : 'ajuste o que estiver errado'}</span></div>
+    <div className="card">${nota.itens.map(i => { const q = Number(qt[i.key]) || 0; const muda = q !== (antes[i.key] || 0);
+      return html`<div key=${i.key} className="row" style=${{ background: muda ? '#FBF8EC' : null }}><div className="grow"><div className="t1">${i.desc}</div><div className="t2">nota ${i.qtd} · antes ${antes[i.key] || 0}${muda ? ' → agora ' + q : ''}</div></div><${Stepper} valor=${qt[i.key]} set=${(v) => setQt(Object.assign({}, qt, { [i.key]: v }))} /></div>`; })}</div>
+    <div className="card pad">
+      <label className="f"><span className="lb">Motivo da correção</span><input className="inp" value=${motivo} onChange=${(e) => setMotivo(e.target.value)} placeholder="Ex.: 10 tubos contados em dobro" /></label>
+      <label className="f"><span className="lb">Quem está conferindo</span><input className="inp" value=${confNome} onChange=${(e) => setConfNome(e.target.value)} /></label>
+      <${Assinatura} rotulo="Assinatura de quem confere" valor=${sigConf} set=${setSigConf} />
+      ${precisaRep ? html`<label className="f"><span className="lb">Representante da ${empresa}</span><input className="inp" value=${repNome} onChange=${(e) => setRepNome(e.target.value)} placeholder=${repAnt || 'Nome'} /></label>
+        <${Assinatura} rotulo=${'Assinatura do representante da ' + empresa} valor=${sigRep} set=${setSigRep} />
+        <div className="hint" style=${{ padding: 0 }}>Obrigatória porque o representante assinou a conferência anterior.</div>` : html`<div className="hint" style=${{ padding: 0 }}>Ninguém da ${empresa} assinou a conferência anterior, então só quem confere assina.</div>`}
+    </div>
+    <${Rodape}><button className="btn block" onClick=${confirmar}>Salvar revisão ${rev + 1}</button></${Rodape}>
   </${Tela}>`;
 }
 /* ================= ABA 2 · CD (por local → nota → peça) ================= */
@@ -1818,9 +1889,9 @@ function ItemNF({ i, local, conferido, mostrarNota }) {
   const c = catalogoItem(i.key); const chips = [];
   if (i.aConferir) chips.push(['y', 'A conferir ' + nfmt(i.aConferir)]);
   if (i.cd) chips.push(['g', 'CD ' + nfmt(i.cd) + (c.baia ? ' · baia ' + c.baia : '')]);
-  if (i.transito) chips.push(['y', 'Em trânsito ' + nfmt(i.transito)]);
+  if (i.transito) chips.push(['gr', 'Na frente ' + nfmt(i.transito)]);
   Object.keys(i.frentes || {}).forEach(l => { const f = i.frentes[l]; const onde = l !== local ? ' · ' + l : '';
-    if (f.ag) chips.push(['b', 'Aguardando ' + nfmt(f.ag) + onde]); if (f.mo) chips.push(['gr', 'Montadas ' + nfmt(f.mo) + onde]); });
+    if (f.ag + f.mo) chips.push(['gr', (l !== local ? 'Na frente ' + l : 'Na frente') + ' ' + nfmt(f.ag + f.mo)]); });
   if (i.falta) chips.push(['m', 'Falta ' + nfmt(i.falta)]);
   if (i.perda) chips.push(['m', 'Perda ' + nfmt(i.perda)]);
   if (i.devolvido) chips.push(['g', 'Devolvidas ' + nfmt(i.devolvido)]);
@@ -1879,7 +1950,7 @@ function TelaLocal({ ctx }) {
   const r = visaoLocal(local);
   const [aberta, setAberta] = useState(nav.p.nota || (r.notas[0] && r.notas[0].nota.id));
   const [modal, setModal] = useState(null);
-  const chegando = store.todos('remessas').filter(x => x.destino === local && ['em_transito', 'aguardando_recebimento'].includes(x.status));
+  const chegando = store.todos('remessas').filter(x => x.tipo !== 'pedido' && x.destino === local && ['em_transito', 'aguardando_recebimento'].includes(x.status));
   const res = resumoFrente(local); const contHoje = contagemDoDia(local, H);
   const paradas = res.filter(x => x.diasParado > DIAS_PARADA_ALERTA);
   const podeF = pode(u, 'frente', local);
@@ -2126,6 +2197,13 @@ function totaisTermo(r) {
   const dv = devolvidoTermo(r); const ret = t.itens.reduce((a, i) => a + i.qtd, 0); const dev = t.itens.reduce((a, i) => a + Math.min(i.qtd, dv[i.key] || 0), 0);
   return { ret, dev, falta: ret - dev };
 }
+// descrição da peça: catálogo; se não tiver, a descrição que veio na nota
+function descPeca(key) {
+  const c = store.pegar('catalogo', key); if (c && c.desc && c.desc !== key) return c.desc;
+  for (const n of store.todos('notas')) { const it = (n.itens || []).find(i => i.key === key && i.desc); if (it) return it.desc; }
+  return descItem(key);
+}
+function porNF(nfs) { return Object.keys(nfs || {}).filter(id => nfs[id] > 0).map(id => { const n = store.pegar('notas', id); return { id, nf: n ? String(n.numero) : '', q: nfs[id] }; }); }
 function nomeNF(id) { const n = store.pegar('notas', id); return n ? 'NF ' + n.numero : 'sem nota'; }
 function nfsTexto(nfs) { return Object.keys(nfs || {}).filter(id => nfs[id] > 0).map(nomeNF).join(', '); }
 
@@ -2393,7 +2471,7 @@ function TelaRetirada({ ctx }) {
     const ops = []; const itensT = [];
     rem.itens.forEach(i => { const q = Math.min(Number(qt[i.key]) || 0, Math.max(0, cd[i.key] || 0)) || 0; if (q <= 0) return;
       const mv = movFIFO('retirada', i.key, q, 'CD', 'F:' + rem.destino, rem.id, respNome); const nfs = {}; mv.forEach(o => { nfs[o.doc.nf] = (nfs[o.doc.nf] || 0) + o.doc.qtd; ops.push(o); });
-      itensT.push({ key: i.key, qtd: q, nfs, desc: descItem(i.key), nfTxt: nfsTexto(nfs) }); });
+      itensT.push({ key: i.key, qtd: q, nfs, desc: descPeca(i.key), nfTxt: nfsTexto(nfs), porNF: porNF(nfs) }); });
     if (!itensT.length) return toast('Essas peças não estão mais no CD.');
     const em = agoraISO();
     const termo = { colaborador: { nome: col.nome.trim().toUpperCase(), matricula: (col.matricula || '').trim(), cargo: (col.cargo || '').trim().toUpperCase(), setor: (col.setor || '').trim() }, via: col.via || 'digitado',
@@ -2409,7 +2487,7 @@ function TelaRetirada({ ctx }) {
       <${CampoPessoa} valor=${col} set=${setCol} completo=${true} />
       <div className="grid2"><label className="f"><span className="lb">Responsável do setor</span><input className="inp" value=${respSetor} onChange=${(e) => setRespSetor(e.target.value)} /></label>
         <label className="f"><span className="lb">Obra</span><input className="inp" value=${obra} onChange=${(e) => setObra(e.target.value)} /></label></div>
-      <div className="hint" style=${{ padding: 0 }}>Nº do patrimônio fica em branco. Data da retirada: hoje, ${fmtData(hoje())}.</div></div>
+      <div className="hint" style=${{ padding: 0 }}>A coluna do patrimônio mostra o Nº da nota fiscal. Data da retirada: hoje, ${fmtData(hoje())}.</div></div>
     <div className="card pad"><b>2 · Peças retiradas</b>
       <div>${rem.itens.map(i => html`<div key=${i.key} className="row" style=${{ padding: '10px 0' }}><div className="grow"><div className="t1">${descItem(i.key)}</div><div className="t2">Separado ${i.enviado != null ? i.enviado : i.qtd} · no CD ${cd[i.key] || 0}</div></div><${Stepper} valor=${qt[i.key]} max=${cd[i.key] || 0} set=${(v) => setQt(Object.assign({}, qt, { [i.key]: v }))} /></div>`)}</div></div>
     <div className="card pad"><b>3 · Rubrica e assinaturas</b>
@@ -2497,12 +2575,15 @@ function TermosProntos({ r, retirada }) {
 
 /* ---------- termo em PDF (modelos FOR-SUP-001 e FOR-SUP-002) ---------- */
 function versaoTermo(r) { return (r.devolucoes || []).length; }
-function linhasTermo(r) { // cada devolução vira uma linha própria; o que está com a pessoa fica numa linha sem data de devolução
+function linhasTermo(r) { // uma linha por peça e nota fiscal; cada devolução vira linha própria com data e visto
   const out = [];
   r.termo.itens.forEach(i => {
-    const nfs = nfsTexto(i.nfs); const desc = (descItem(i.key) + (nfs ? ' · ' + nfs : '')).toUpperCase(); let resta = i.qtd;
-    (r.devolucoes || []).forEach(d => { const q = Math.min(resta, Number((d.itens || {})[i.key]) || 0); if (q > 0) { out.push({ qtd: q, desc, dev: d }); resta -= q; } });
-    if (resta > 0) out.push({ qtd: resta, desc, dev: null });
+    const desc = String(i.desc && i.desc !== i.key ? i.desc : descPeca(i.key)).toUpperCase();
+    const segs = (i.porNF && i.porNF.length ? i.porNF : porNF(i.nfs)).map(x => ({ nf: x.nf, resta: x.q }));
+    if (!segs.length) segs.push({ nf: '', resta: i.qtd });
+    (r.devolucoes || []).forEach(dv => { let q = Number((dv.itens || {})[i.key]) || 0;
+      segs.forEach(sg => { if (q <= 0 || sg.resta <= 0) return; const x = Math.min(q, sg.resta); out.push({ qtd: x, desc, nf: sg.nf, dev: dv }); sg.resta -= x; q -= x; }); });
+    segs.forEach(sg => { if (sg.resta > 0) out.push({ qtd: sg.resta, desc, nf: sg.nf, dev: null }); });
   });
   return out;
 }
@@ -2522,11 +2603,11 @@ function paginasTermo(r, via) {
     const minimo = ult ? Math.max(fat.length, 20) : porPag; while (fat.length < minimo) fat.push(null);
     let head, rows;
     if (via === 'colab') {
-      head = '<tr><th style="' + th + ';width:8%">QUANTIDADE</th><th style="' + th + '">DESCRIÇÃO DO ITEM</th><th style="' + th + ';width:11%">Nº DO PATRIMÔNIO</th><th style="' + th + ';width:11%">DATA DA RETIRADA</th><th style="' + th + ';width:12%">VISTO DO INTEGRANTE</th><th style="' + th + ';width:11%">DATA DA DEVOLUÇÃO</th><th style="' + th + ';width:12%">VISTO DO ALMOXARIFADO</th></tr>';
-      rows = fat.map(l => l ? '<tr><td style="' + td + ';text-align:center">' + l.qtd + '</td><td style="' + td + '">' + esc(l.desc) + '</td><td style="' + td + '"></td><td style="' + td + ';text-align:center">' + dRet + '</td><td style="' + td + ';text-align:center;padding:1px">' + img(t.rubrica, 21) + '</td><td style="' + td + ';text-align:center">' + dd(l.dev) + '</td><td style="' + td + ';text-align:center;padding:1px">' + (l.dev ? img(l.dev.visto, 21) : '') + '</td></tr>' : '<tr>' + ('<td style="' + td + '"></td>').repeat(7) + '</tr>').join('');
+      head = '<tr><th style="' + th + ';width:8%">QUANTIDADE</th><th style="' + th + '">DESCRIÇÃO DO ITEM</th><th style="' + th + ';width:11%">Nº DA NOTA FISCAL</th><th style="' + th + ';width:11%">DATA DA RETIRADA</th><th style="' + th + ';width:12%">VISTO DO INTEGRANTE</th><th style="' + th + ';width:11%">DATA DA DEVOLUÇÃO</th><th style="' + th + ';width:12%">VISTO DO ALMOXARIFADO</th></tr>';
+      rows = fat.map(l => l ? '<tr><td style="' + td + ';text-align:center">' + l.qtd + '</td><td style="' + td + '">' + esc(l.desc) + '</td><td style="' + td + ';text-align:center">' + esc(l.nf) + '</td><td style="' + td + ';text-align:center">' + dRet + '</td><td style="' + td + ';text-align:center;padding:1px">' + img(t.rubrica, 21) + '</td><td style="' + td + ';text-align:center">' + dd(l.dev) + '</td><td style="' + td + ';text-align:center;padding:1px">' + (l.dev ? img(l.dev.visto, 21) : '') + '</td></tr>' : '<tr>' + ('<td style="' + td + '"></td>').repeat(7) + '</tr>').join('');
     } else {
-      head = '<tr><th style="' + th + ';width:7%" rowspan="2">QUANT.</th><th style="' + th + '" rowspan="2">DESCRIÇÃO DO ITEM</th><th style="' + th + ';width:8%" rowspan="2">Nº DO PATRIM.</th><th style="' + th + '" colspan="4">RETIRADA</th><th style="' + th + '" colspan="2">DEVOLUÇÃO</th></tr><tr><th style="' + th + ';width:8.5%">DATA</th><th style="' + th + ';width:15%">NOME / MATRÍCULA</th><th style="' + th + ';width:9.5%">VISTO DO INTEGRANTE</th><th style="' + th + ';width:6.5%">OBRA</th><th style="' + th + ';width:8.5%">DATA</th><th style="' + th + ';width:9.5%">VISTO DO ALMOX.</th></tr>';
-      rows = fat.map(l => l ? '<tr><td style="' + td + ';text-align:center">' + l.qtd + '</td><td style="' + td + ';font-size:8.5px">' + esc(l.desc) + '</td><td style="' + td + '"></td><td style="' + td + ';text-align:center;font-size:8.5px">' + dRet + '</td><td style="' + td + ';font-size:8px;line-height:1.2">' + esc(c.nome) + (c.matricula ? ' / ' + esc(c.matricula) : '') + '</td><td style="' + td + ';text-align:center;padding:1px">' + img(t.rubrica, 21) + '</td><td style="' + td + ';text-align:center;font-size:8px">GÁVEA</td><td style="' + td + ';text-align:center;font-size:8.5px">' + dd(l.dev) + '</td><td style="' + td + ';text-align:center;padding:1px">' + (l.dev ? img(l.dev.visto, 21) : '') + '</td></tr>' : '<tr>' + ('<td style="' + td + '"></td>').repeat(9) + '</tr>').join('');
+      head = '<tr><th style="' + th + ';width:7%" rowspan="2">QUANT.</th><th style="' + th + '" rowspan="2">DESCRIÇÃO DO ITEM</th><th style="' + th + ';width:8%" rowspan="2">Nº DA NOTA</th><th style="' + th + '" colspan="4">RETIRADA</th><th style="' + th + '" colspan="2">DEVOLUÇÃO</th></tr><tr><th style="' + th + ';width:8.5%">DATA</th><th style="' + th + ';width:15%">NOME / MATRÍCULA</th><th style="' + th + ';width:9.5%">VISTO DO INTEGRANTE</th><th style="' + th + ';width:6.5%">OBRA</th><th style="' + th + ';width:8.5%">DATA</th><th style="' + th + ';width:9.5%">VISTO DO ALMOX.</th></tr>';
+      rows = fat.map(l => l ? '<tr><td style="' + td + ';text-align:center">' + l.qtd + '</td><td style="' + td + ';font-size:8.5px">' + esc(l.desc) + '</td><td style="' + td + ';text-align:center;font-size:8.5px">' + esc(l.nf) + '</td><td style="' + td + ';text-align:center;font-size:8.5px">' + dRet + '</td><td style="' + td + ';font-size:8px;line-height:1.2">' + esc(c.nome) + (c.matricula ? ' / ' + esc(c.matricula) : '') + '</td><td style="' + td + ';text-align:center;padding:1px">' + img(t.rubrica, 21) + '</td><td style="' + td + ';text-align:center;font-size:8px">GÁVEA</td><td style="' + td + ';text-align:center;font-size:8.5px">' + dd(l.dev) + '</td><td style="' + td + ';text-align:center;padding:1px">' + (l.dev ? img(l.dev.visto, 21) : '') + '</td></tr>' : '<tr>' + ('<td style="' + td + '"></td>').repeat(9) + '</tr>').join('');
     }
     const cab = '<table style="width:100%;border-collapse:collapse"><tr><td style="' + B + ';width:20%;text-align:center;padding:8px">' + (window.__LOGO__ ? '<img src="' + window.__LOGO__ + '" style="height:42px">' : '<b>CCG</b>') + '</td><td style="' + B + ';text-align:center;font-weight:700;font-size:13.5px;padding:8px">' + titulo + '</td><td style="' + B + ';width:28%;padding:0"><table style="width:100%;border-collapse:collapse;font-size:8.5px"><tr><td style="padding:4px 6px;border-bottom:1px solid #13152B;border-right:1px solid #13152B"><b>TIPO DE DOCUMENTO:</b><br>FORMULÁRIO</td><td style="padding:4px 6px;border-bottom:1px solid #13152B"><b>CÓDIGO:</b><br>' + cod + '</td></tr><tr><td style="padding:4px 6px;border-right:1px solid #13152B"><b>REVISÃO:</b><br>01</td><td style="padding:4px 6px"><b>DATA:</b><br>26/06/2023</td></tr></table></td></tr></table>';
     const lb = (l, v, w) => '<td style="' + td + ';height:30px' + (w ? ';width:' + w : '') + '"><b style="font-size:7.5px;display:block">' + l + '</b>' + esc(v || '') + '</td>';
@@ -2564,6 +2645,22 @@ function pastasTermo(r) {
   const out = ids.map(id => { const n = store.pegar('notas', id); return { empresa: n ? grupoEmpresa(n.fornecedor) : 'Sem nota', local: (n && n.local) || r.destino, nf: n ? 'NF ' + n.numero : 'Sem nota' }; });
   return out.length ? out : [{ empresa: 'Sem nota', local: r.destino, nf: 'Sem nota' }];
 }
+
+let _ajustou = false;
+function ajustarDadosAntigos(u) { // termos sem descrição/pastas e pedidos do fluxo antigo parados "a caminho"
+  if (_ajustou || store.modo === 'demo' || !(pode(u, 'retirar') || pode(u, 'config'))) return; _ajustou = true;
+  const ops = [];
+  store.todos('remessas').forEach(r => {
+    if (r.tipo === 'pedido' && ['em_transito', 'aguardando_recebimento'].includes(r.status)) { try { receberRemessa(r, {}, { nome: 'Ajuste automático' }); } catch (e) {} return; }
+    if (!r.termo) return;
+    const falta = !r.termo.pastas || r.termo.itens.some(i => !i.porNF || !i.desc || i.desc === i.key);
+    if (!falta) return;
+    const termo = Object.assign({}, r.termo, { itens: r.termo.itens.map(i => Object.assign({}, i, { desc: descPeca(i.key), nfTxt: nfsTexto(i.nfs), porNF: porNF(i.nfs) })) });
+    termo.pastas = pastasTermo({ termo, destino: r.destino }); termo.nfsTxt = [...new Set(termo.itens.flatMap(i => Object.keys(i.nfs || {})))].map(nomeNF).join(', ');
+    ops.push({ c: 'remessas', doc: Object.assign({}, r, { termo, drive: { ok: false }, drivePendente: true }) });
+  });
+  if (ops.length) store.gravarVarios(ops);
+}
 /* ================= ABA 4 · GESTÃO ================= */
 function TelaGestao({ ctx }) {
   const { usuario: u, ir } = ctx; useStore(); const H = hoje();
@@ -2594,7 +2691,7 @@ function TelaGestao({ ctx }) {
     <div className="card pad" style=${{ gap: 10 }}><${BarraLocal} r=${tot} /><${Num4} r=${tot} />
       ${tot.transito > 0 && html`<div className="t2">${nfmt(tot.transito)} em trânsito</div>`}</div>
     <div className="card">${vis.filter(x => x.notas.length).map(x => html`<button key=${x.local} className="row" onClick=${() => ir('cd', 'local', { local: x.local })}>
-      <span className="grow"><div className="t1">${x.local}</div><div className="t2">${nfmt(x.cd)} no CD · ${nfmt(x.ag)} aguardando · ${nfmt(x.mo)} montadas${x.falta ? ' · ' + nfmt(x.falta) + ' em falta' : ''}</div></span><span className="chev">›</span></button>`)}
+      <span className="grow"><div className="t1">${x.local}</div><div className="t2">${nfmt(x.cd)} no CD · ${nfmt(x.ag + x.mo + (x.transito || 0))} na frente${x.falta ? ' · ' + nfmt(x.falta) + ' em falta' : ''}</div></span><span className="chev">›</span></button>`)}
       ${!vis.some(x => x.notas.length) && html`<${Vazio}>Nenhuma nota conferida ainda.</${Vazio}>`}</div>
     </div><div className="dcol">
     <div className="sec">Peças paradas <span className="t2">aguardando montagem</span></div>
@@ -2828,16 +2925,18 @@ function dadosRelatorio(n) {
   const totQ = itens.reduce((t, i) => t + i.qtd, 0), totR = itens.reduce((t, i) => t + i.rec, 0);
   const faltas = itens.filter(i => i.dif < 0), sobras = itens.filter(i => i.dif > 0);
   const faltaQ = faltas.reduce((t, i) => t - i.dif, 0), faltaV = faltas.reduce((t, i) => t - i.dif * i.vu, 0), sobraQ = sobras.reduce((t, i) => t + i.dif, 0);
-  let viagens = (n.viagens || []).map(v => ({ n: v.n, em: v.em, por: v.por || '', q: Object.values(v.recebido || {}).reduce((a, b) => a + b, 0) }));
-  if (!viagens.length && concluida) viagens = [{ n: 1, em: n.concluidaEm || n.criadoEm || agoraISO(), por: n.conferente || '', q: totR }];
+  let viagens = (n.viagens || []).map(v => ({ n: v.n, rot: v.correcao ? 'Correção (rev. ' + v.correcao + ')' : 'Viagem ' + v.n, em: v.em, por: v.por || '', q: Object.values(v.recebido || {}).reduce((a, b) => a + b, 0) }));
+  if (!viagens.length && concluida) viagens = [{ n: 1, rot: 'Viagem 1', em: n.concluidaEm || n.criadoEm || agoraISO(), por: n.conferente || '', q: totR }];
   const situacao = !concluida ? ['RECEBIMENTO PARCIAL', 'parcial', 'Recebimento parcial'] : faltaQ ? ['CONFERIDA COM FALTA', 'falta', 'Conferida com falta'] : sobraQ ? ['CONFERIDA COM SOBRA', 'sobra', 'Conferida com sobra'] : ['CONFERIDA SEM DIFERENÇA', 'ok', 'Conferida sem diferença'];
   const datas = viagens.map(v => dataLocal(new Date(v.em))).sort();
   const periodo = !datas.length ? '—' : datas[0] === datas[datas.length - 1] ? fmtData(datas[0]) : fmtDataCurta(datas[0]) + ' a ' + fmtData(datas[datas.length - 1]);
   let h = 0; String(n.id).split('').forEach(c => { h = (h * 31 + c.charCodeAt(0)) >>> 0; });
-  const assinaturas = (n.assinaturas || []).filter(a => a.conf || a.mot);
-  return { n, assinaturas, concluida, itens, totQ, totR, faltas, sobras, faltaQ, faltaV, sobraQ, viagens, situacao, periodo,
+  const rev = n.revisao || 1;
+  const assinaturas = (n.assinaturas || []).filter(a => (a.conf || a.mot) && (n.obsoleta || (a.revisao || 1) === rev));
+  const revTxt = n.obsoleta ? 'REVISÃO ' + rev + ' · OBSOLETA · substituída pela revisão ' + n.substituidaPor + ' em ' + fmtData(dataLocal(new Date(n.substituidaEm))) : rev > 1 ? 'REVISÃO ' + rev + ' · substitui a conferência anterior' + (n.motivoRevisao ? ' · motivo: ' + n.motivoRevisao : '') : '';
+  return { n, rev, revTxt, obsoleta: !!n.obsoleta, assinaturas, concluida, itens, totQ, totR, faltas, sobras, faltaQ, faltaV, sobraQ, viagens, situacao, periodo,
     empresa: grupoEmpresa(n.fornecedor), conferente: (viagens[viagens.length - 1] || {}).por || n.conferente || '—',
-    codigo: (n.numero || 'NF') + '-' + h.toString(16).slice(-4).toUpperCase(), gerado: fmtData(hoje()) + ' ' + fmtHora(agoraISO()) };
+    codigo: (n.numero || 'NF') + '-' + h.toString(16).slice(-4).toUpperCase() + (rev > 1 ? '-R' + rev : ''), gerado: fmtData(hoje()) + ' ' + fmtHora(agoraISO()) };
 }
 const COR_SIT = { falta: '#9C3D6E', sobra: '#4A6491', ok: '#3E7A5E', parcial: '#B8962E' };
 const TXT_SIT = { falta: '#7A1556', sobra: '#243B8F', ok: '#10543A', parcial: '#5C4300' };
@@ -2861,11 +2960,13 @@ function htmlImagem(d) {
     ${arr.slice(0, 5).map(i => `<div style="display:flex;justify-content:space-between;gap:10px;font-size:14px"><div><b>${esc(i.desc)}</b><div style="font-size:12px;color:#4E5752">nota ${i.qtd} · chegaram ${i.rec}</div></div><div style="text-align:right;white-space:nowrap"><b style="color:${TXT_SIT[sinal > 0 ? 'sobra' : 'falta']}">${sinal > 0 ? '+' : '−'}${Math.abs(i.dif)}</b>${sinal < 0 ? `<div style="font-size:12px;color:#4E5752">${brl(-i.dif * i.vu)}</div>` : ''}</div></div>`).join('')}
     ${arr.length > 5 ? `<div style="font-size:12px;color:#4E5752">+ ${arr.length - 5} itens (veja o PDF)</div>` : ''}</div>`;
   const semDif = d.itens.filter(i => i.dif === 0).length;
-  return `<div style="width:540px;background:#F2F4EE;font-family:'IBM Plex Sans',sans-serif;color:#13152B">
+  const faixa = d.revTxt ? `<div style="background:${d.obsoleta ? '#7A1556' : '#B8962E'};color:#fff;font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;letter-spacing:.08em;padding:8px 22px">${esc(d.revTxt)}</div>` : '';
+  const marca = d.obsoleta ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none"><div style="transform:rotate(-30deg);font-size:84px;font-weight:700;color:rgba(122,21,86,.16);letter-spacing:.1em">OBSOLETO</div></div>` : '';
+  return `<div style="width:540px;background:#F2F4EE;font-family:'IBM Plex Sans',sans-serif;color:#13152B;position:relative">${marca}
   <div style="background:#212B2A;padding:22px 26px;display:flex;align-items:center;gap:14px">
     <div style="flex:1"><div style="font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;letter-spacing:.16em;color:#AEC155">CONFERÊNCIA DE RECEBIMENTO</div>
     <div style="font-size:24px;font-weight:700;color:#fff;margin-top:2px">NF ${esc(d.n.numero)} · ${esc(d.empresa)}</div>
-    <div style="font-size:12px;color:#C9CEC2;margin-top:2px">${esc(d.n.local || '')} · ${esc(d.periodo)}</div></div>${logoEmpresaHtml(d, 58)}</div>
+    <div style="font-size:12px;color:#C9CEC2;margin-top:2px">${esc(d.n.local || '')} · ${esc(d.periodo)}</div></div>${logoEmpresaHtml(d, 58)}</div>${faixa}
   <div style="padding:18px 22px;display:flex;flex-direction:column;gap:12px">
     <div style="background:#fff;border-radius:16px;padding:14px 16px;display:flex;align-items:center;gap:12px"><span style="width:12px;height:12px;border-radius:999px;background:${COR_SIT[k]}"></span><b style="font-size:16px;flex:1">${d.situacao[2]}</b>${d.faltaV && d.concluida ? `<b style="font-size:16px;color:#7A1556">${brl(d.faltaV)}</b>` : ''}</div>
     <div style="display:flex;gap:8px">${[[d.totQ, 'peças na nota', ''], [d.totR, d.concluida ? 'recebidas' : 'recebidas até agora', ''], d.concluida ? [d.faltaQ || d.sobraQ, d.faltaQ ? 'em falta' : d.sobraQ ? 'a mais' : 'diferença', d.faltaQ ? '#7A1556' : ''] : [d.totQ - d.totR, 'ainda por vir', '']].map(([v, l, c]) => `<div style="flex:1;background:#fff;border-radius:14px;padding:12px 14px"><div style="font-size:26px;font-weight:700;${c ? 'color:' + c : ''}">${nfmt(v)}</div><div style="font-size:11px;color:#4E5752">${l}</div></div>`).join('')}</div>
@@ -2874,7 +2975,7 @@ function htmlImagem(d) {
       <div style="display:flex;justify-content:space-between;font-size:13px"><span><b>${String(pct).replace('.', ',')}%</b> das peças recebidas</span><span style="color:#4E5752">${d.n.totalNota ? 'valor da nota ' + brl(d.n.totalNota) : ''}</span></div>
       <div style="display:flex;height:10px;border-radius:999px;overflow:hidden;background:#E6EAE0"><div style="width:${Math.min(100, pct)}%;background:#13152B"></div></div>
       <div style="display:flex;justify-content:space-between;font-size:12px;color:#4E5752"><span>${d.itens.length} itens · <b style="color:#13152B">${semDif} sem diferença</b></span><span>${d.faltas.length ? d.faltas.length + (d.concluida ? ' com falta' : ' ainda por vir') : ''}</span></div></div>
-    ${d.viagens.length ? `<div style="display:flex;flex-wrap:wrap;gap:8px">${d.viagens.map(v => `<div style="flex:1;min-width:150px;background:#fff;border-radius:12px;padding:8px 12px;font-size:12px;color:#4E5752">Viagem ${v.n} · ${fmtDataCurta(dataLocal(new Date(v.em)))} · ${nfmt(v.q)} pç</div>`).join('')}</div>` : ''}
+    ${d.viagens.length ? `<div style="display:flex;flex-wrap:wrap;gap:8px">${d.viagens.map(v => `<div style="flex:1;min-width:150px;background:#fff;border-radius:12px;padding:8px 12px;font-size:12px;color:#4E5752">${esc(v.rot)} · ${fmtDataCurta(dataLocal(new Date(v.em)))} · ${nfmt(v.q)} pç</div>`).join('')}</div>` : ''}
     <div style="display:flex;align-items:center;gap:12px;padding-top:12px;margin-top:4px;border-top:1px solid #D7DBD0"><div style="background:#fff;border-radius:10px;padding:5px 8px"><img src="${window.__LOGO__}" style="height:28px;display:block"></div><div style="flex:1;font-size:11px;color:#4E5752;text-align:right">Conferente: ${esc(d.conferente)}<br>Controle de Peças · CCG Linha 4 · ${esc(d.gerado)}</div></div>
   </div></div>`;
 }
@@ -2892,13 +2993,15 @@ function fabricaPaginaPDF(d) {
   const ocorr = [d.faltas.length && d.concluida ? `<b>Falta:</b> ${d.faltas.map(i => esc(i.desc) + ' (nota ' + i.qtd + ', recebidas ' + i.rec + ')').join('; ')}. Pendência aberta para contestação com a ${esc(d.empresa)} no valor de ${brl(d.faltaV)}.` : '',
     d.sobras.length ? `<b>Sobra:</b> ${d.sobras.map(i => esc(i.desc) + ' (+' + i.dif + ')').join('; ')} — peças fora da nota.` : '',
     !d.concluida ? `<b>Recebimento parcial:</b> ainda faltam chegar ${nfmt(d.totQ - d.totR)} peças desta nota. A conferência continua nas próximas viagens.` : ''].filter(Boolean);
-  return (pg, p, tot) => `<div class="pg" style="width:794px;height:1123px;box-sizing:border-box;background:#fff;font-family:'IBM Plex Sans',sans-serif;color:#13152B;padding:42px 50px 30px;display:flex;flex-direction:column;gap:13px;font-size:11px">
+  return (pg, p, tot) => `<div class="pg" style="width:794px;height:1123px;box-sizing:border-box;background:#fff;font-family:'IBM Plex Sans',sans-serif;color:#13152B;padding:42px 50px 30px;display:flex;flex-direction:column;gap:13px;font-size:11px;position:relative">
+    ${d.obsoleta ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:2"><div style="transform:rotate(-35deg);font-size:150px;font-weight:700;color:rgba(122,21,86,.13);letter-spacing:.1em">OBSOLETO</div></div>` : ''}
     ${cab(p)}
+    ${d.revTxt ? `<div style="padding:7px 12px;border-radius:6px;background:${d.obsoleta ? '#FBE4F1' : '#FBF3DD'};color:${d.obsoleta ? '#7A1556' : '#5C4300'};font-family:'IBM Plex Mono',monospace;font-size:9.5px;font-weight:600;letter-spacing:.06em">${esc(d.revTxt)}</div>` : ''}
     ${p === 0 ? `<div style="display:flex;gap:16px;align-items:center"><div style="flex:1;display:flex;gap:14px;align-items:center">${logoEmpresaHtml(d, 56)}<div><div style="font-size:24px;font-weight:700;line-height:1.1">NF ${esc(d.n.numero)} · ${esc(d.empresa)}</div><div style="font-size:11px;color:#4E5752;margin-top:3px">${esc(d.n.fornecedor || '')}${d.n.contrato ? ' · contrato ' + esc(d.n.contrato) : ''}</div></div></div>
       <div style="text-align:right"><div style="display:inline-block;font-size:11px;font-weight:700;letter-spacing:.06em;padding:6px 12px;border-radius:6px;border:1.5px solid ${COR_SIT[k]};color:${TXT_SIT[k]}">${d.situacao[0]}</div>${d.n.emissao ? `<div style="font-size:10px;color:#4E5752;margin-top:6px">Emitida em ${esc(d.n.emissao)}</div>` : ''}</div></div>
       <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid #D7DBD0;border-radius:10px;overflow:hidden">${info('Local da aplicação', esc(d.n.local || '—'))}${info('Conferência', esc(d.periodo))}${info('Conferente', esc(d.conferente))}${info('Valor da nota', d.n.totalNota ? brl(d.n.totalNota) : '—', true)}</div>
       <div style="display:flex;border:1px solid #D7DBD0;border-radius:10px;overflow:hidden">${kpi(nfmt(d.totQ), 'peças na nota')}${kpi(nfmt(d.totR), d.concluida ? 'peças recebidas' : 'recebidas até agora')}${d.concluida ? kpi(nfmt(d.faltaQ), 'peças em falta', d.faltaQ ? '#7A1556' : '') + kpi(nfmt(d.sobraQ), 'peças a mais', d.sobraQ ? '#243B8F' : '') + kpi(d.faltaV ? brlC(d.faltaV) : 'R$ 0', 'valor em falta', d.faltaV ? '#7A1556' : '', true) : kpi(nfmt(d.totQ - d.totR), 'ainda por vir', '#5C4300') + kpi(d.viagens.length, d.viagens.length === 1 ? 'viagem' : 'viagens', '', true)}</div>
-      ${d.viagens.length ? `<div><div style="font-size:12px;font-weight:700;margin-bottom:6px">Viagens</div><table style="width:100%;border-collapse:collapse;font-size:10.5px"><tr><th style="${TH('left')}">Viagem</th><th style="${TH('left')}">Data e hora</th><th style="${TH('left')}">Conferente</th><th style="${TH('right')}">Peças recebidas</th></tr>${d.viagens.map((v, ix) => `<tr style="background:${ix % 2 ? '#FAFBF8' : '#fff'}"><td style="padding:4.5px 8px">${v.n}</td><td style="padding:4.5px 8px">${fmtData(dataLocal(new Date(v.em)))} · ${fmtHora(v.em)}</td><td style="padding:4.5px 8px">${esc(v.por)}</td><td style="padding:4.5px 8px;text-align:right;font-weight:600">${nfmt(v.q)}</td></tr>`).join('')}</table></div>` : ''}` : ''}
+      ${d.viagens.length ? `<div><div style="font-size:12px;font-weight:700;margin-bottom:6px">Viagens</div><table style="width:100%;border-collapse:collapse;font-size:10.5px"><tr><th style="${TH('left')}">Viagem</th><th style="${TH('left')}">Data e hora</th><th style="${TH('left')}">Conferente</th><th style="${TH('right')}">Peças recebidas</th></tr>${d.viagens.map((v, ix) => `<tr style="background:${ix % 2 ? '#FAFBF8' : '#fff'}"><td style="padding:4.5px 8px">${esc(v.rot)}</td><td style="padding:4.5px 8px">${fmtData(dataLocal(new Date(v.em)))} · ${fmtHora(v.em)}</td><td style="padding:4.5px 8px">${esc(v.por)}</td><td style="padding:4.5px 8px;text-align:right;font-weight:600">${nfmt(v.q)}</td></tr>`).join('')}</table></div>` : ''}` : ''}
     ${pg.fim > pg.ini ? `<div><div style="font-size:12px;font-weight:700;margin-bottom:6px">Itens da nota${tot > 1 ? ` <span style="font-weight:400;color:#4E5752">· ${pg.ini + 1} a ${pg.fim} de ${d.itens.length}</span>` : ''}</div>
       <table style="width:100%;border-collapse:collapse;font-size:10.5px"><tr><th style="${TH('left')}">Código</th><th style="${TH('left')}">Descrição</th><th style="${TH('right')}">Nota</th><th style="${TH('right')}">Recebido</th><th style="${TH('left')}">Situação</th><th style="${TH('right')}">Valor unit.</th><th style="${TH('right')}">Diferença</th></tr>
       ${d.itens.slice(pg.ini, pg.fim).map((it, ix) => linha(it, pg.ini + ix)).join('')}
@@ -2906,8 +3009,8 @@ function fabricaPaginaPDF(d) {
     ${pg.ultima && ocorr.length ? `<div style="padding:10px 12px;border-radius:8px;background:#F7F8F4;border-left:3px solid ${COR_SIT[k]};font-size:10.5px;line-height:1.5">${ocorr.join('<br>')}</div>` : ''}
     <div style="flex:1"></div>
     ${pg.ultima && d.assinaturas.length ? `<div>${d.assinaturas.slice(-3).map(a => `<div style="display:flex;gap:28px;align-items:flex-end;margin-bottom:6px">
-      ${[[a.conf, a.confNome || '', 'Conferente · CCG'], [a.mot, a.motNome || '', 'Motorista / representante ' + esc(d.empresa)]].map(([img, nm, papel]) => `<div style="flex:1;text-align:center"><div style="height:46px;display:flex;align-items:flex-end;justify-content:center">${img ? `<img src="${img}" style="max-height:46px;max-width:100%">` : '<span style="font-size:9px;color:#B9BFB2">sem assinatura</span>'}</div><div style="border-top:1px solid #13152B;margin:2px 0 4px"></div><div style="font-size:10px;font-weight:600">${esc(nm) || '&nbsp;'}</div><div style="font-size:9px;color:#4E5752">${papel}</div></div>`).join('')}
-      <div style="width:120px;font-size:9px;color:#4E5752;text-align:right;padding-bottom:16px">${a.encerramento ? 'Encerramento' : a.viagem ? 'Viagem ' + a.viagem : ''}<br>${fmtData(dataLocal(new Date(a.em)))} · ${fmtHora(a.em)}</div></div>`).join('')}</div>` : ''}
+      ${[[a.conf, a.confNome || '', 'Conferente · CCG'], [a.mot, a.motNome || '', 'Representante ' + esc(d.empresa)]].map(([img, nm, papel]) => `<div style="flex:1;text-align:center"><div style="height:46px;display:flex;align-items:flex-end;justify-content:center">${img ? `<img src="${img}" style="max-height:46px;max-width:100%">` : '<span style="font-size:9px;color:#B9BFB2">sem assinatura</span>'}</div><div style="border-top:1px solid #13152B;margin:2px 0 4px"></div><div style="font-size:10px;font-weight:600">${esc(nm) || '&nbsp;'}</div><div style="font-size:9px;color:#4E5752">${papel}</div></div>`).join('')}
+      <div style="width:120px;font-size:9px;color:#4E5752;text-align:right;padding-bottom:16px">${a.revisao > 1 ? 'Revisão ' + a.revisao : a.encerramento ? 'Encerramento' : a.viagem ? 'Viagem ' + a.viagem : ''}<br>${fmtData(dataLocal(new Date(a.em)))} · ${fmtHora(a.em)}</div></div>`).join('')}</div>` : ''}
     <div style="display:flex;justify-content:space-between;padding-top:10px;border-top:1px solid #D7DBD0;font-size:9px;color:#8A9289"><span>Gerado pelo app Controle de Peças · CCG · ${esc(d.gerado)}</span><span style="font-family:'IBM Plex Mono',monospace">CÓD. ${esc(d.codigo)} · página ${p + 1} de ${tot}</span></div>
   </div>`;
 }
@@ -2971,7 +3074,7 @@ function CompartilharRelatorio({ nota, concluiu, aoFechar }) {
   const d = dadosRelatorio(nota);
   const [ocup, setOcup] = useState(''); const [prev, setPrev] = useState(null);
   useEffect(() => { let vivo = true; gerarImagemRelatorio(d).then(b => { if (vivo && b) setPrev(URL.createObjectURL(b)); }).catch(() => {}); return () => { vivo = false; }; }, []);
-  const base = 'Conferencia_NF' + (nota.numero || '') + '_' + d.empresa.replace(/\W+/g, '');
+  const base = 'Conferencia_NF' + (nota.numero || '') + '_' + d.empresa.replace(/\W+/g, '') + (d.rev > 1 || d.obsoleta ? '_rev' + d.rev : '') + (d.obsoleta ? '_OBSOLETA' : '');
   const fazer = async (tipo) => {
     setOcup(tipo === 'img' ? 'Gerando imagem…' : 'Gerando PDF…');
     try {
@@ -2983,7 +3086,7 @@ function CompartilharRelatorio({ nota, concluiu, aoFechar }) {
   };
   const copiar = () => { const t = textoRelatorio(d); (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('Texto copiado.')).catch(() => toast('Não foi possível copiar.')); };
   const k = d.situacao[1];
-  const titulo = concluiu ? (d.concluida ? 'Conferência concluída' : 'Viagem ' + d.viagens.length + ' fechada') : 'Relatório da conferência';
+  const titulo = d.obsoleta ? 'Revisão ' + d.rev + ' (obsoleta)' : concluiu ? (d.rev > 1 ? 'Revisão ' + d.rev + ' salva' : d.concluida ? 'Conferência concluída' : 'Viagem ' + d.viagens.length + ' fechada') : 'Relatório da conferência';
   const sub = d.concluida ? nfmt(d.totR) + ' peças no CD' + (d.faltaQ ? ' · ' + d.faltaQ + ' em falta (' + brlC(d.faltaV) + ')' : '') + (d.sobraQ ? ' · ' + d.sobraQ + ' a mais' : '')
     : nfmt(d.totR) + ' de ' + nfmt(d.totQ) + ' peças recebidas · nota continua aberta';
   const btn = (tipo, ic, l, escuro) => html`<button disabled=${!!ocup} onClick=${tipo === 'txt' ? copiar : () => fazer(tipo)} style=${{ height: 84, borderRadius: 16, border: 'none', background: escuro ? 'var(--navy)' : 'var(--bg)', color: escuro ? '#fff' : 'var(--navy)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 13, fontWeight: 700, opacity: ocup ? 0.5 : 1 }}><${Ic} n=${ic} s=${24} c=${escuro ? '#AEC155' : '#13152B'} />${l}</button>`;

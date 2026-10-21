@@ -1,5 +1,5 @@
 // sw.js — deixa o app instalável e faz ele abrir sem sinal
-const CACHE = 'ccg-pecas-v5';
+const CACHE = 'ccg-pecas-v6';
 const BASE = ['./', './index.html', './manifest.json', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png', './jsqr.js'];
 // bibliotecas que o app precisa para abrir e entrar: já ficam guardadas na instalação
 const LIBS = [

@@ -263,12 +263,14 @@ function nomeTermo_(r, via) {
   const c = r.termo.colaborador || {};
   return semAcento_(dataBR_(r.termo.em, 'yyyy-MM-dd') + ' - ' + r.numero + ' - ' + String(c.nome || '').toUpperCase() + (c.matricula ? ' (' + c.matricula + ')' : '') + ' - Termo ' + (via === 'colab' ? 'FOR-SUP-001 via colaborador' : 'FOR-SUP-002 via responsavel') + '.pdf').replace(/[\\/:*?"<>|]/g, '-').replace(/[^\x20-\x7E]/g, '');
 }
-function linhasTermo_(r) {
+function linhasTermo_(r) { // uma linha por peça e nota fiscal; cada devolução vira linha com data e visto
   const out = [];
   (r.termo.itens || []).forEach(i => {
-    const desc = (String(i.desc || i.key) + (i.nfTxt ? ' · ' + i.nfTxt : '')).toUpperCase(); let resta = Number(i.qtd) || 0;
-    (r.devolucoes || []).forEach(d => { const q = Math.min(resta, Number((d.itens || {})[i.key]) || 0); if (q > 0) { out.push({ qtd: q, desc: desc, dev: d }); resta -= q; } });
-    if (resta > 0) out.push({ qtd: resta, desc: desc, dev: null });
+    const desc = String(i.desc || i.key).toUpperCase();
+    const segs = (i.porNF && i.porNF.length ? i.porNF : [{ nf: '', q: Number(i.qtd) || 0 }]).map(x => ({ nf: x.nf || '', resta: Number(x.q) || 0 }));
+    (r.devolucoes || []).forEach(d => { let q = Number((d.itens || {})[i.key]) || 0;
+      segs.forEach(sg => { if (q <= 0 || sg.resta <= 0) return; const x = Math.min(q, sg.resta); out.push({ qtd: x, desc: desc, nf: sg.nf, dev: d }); sg.resta -= x; q -= x; }); });
+    segs.forEach(sg => { if (sg.resta > 0) out.push({ qtd: sg.resta, desc: desc, nf: sg.nf, dev: null }); });
   });
   return out;
 }
@@ -287,12 +289,12 @@ function pdfTermo_(r, via) {
   const lb = (l, v, w) => '<td style="' + B + 'font-size:8pt;padding:2px 4px;height:24px;' + (w ? 'width:' + w + ';' : '') + '"><b style="font-size:6.5pt">' + l + '</b><br>' + esc_(v) + '</td>';
   if (via === 'colab') {
     h += '<table style="margin-top:5px"><tr>' + lb('NOME DO FUNCIONÁRIO:', c.nome, '48%') + lb('MATRÍCULA:', c.matricula, '16%') + lb('OBRA:', t.obra) + '</tr><tr>' + lb('CARGO/FUNÇÃO:', c.cargo) + lb('RESPONSÁVEL DO SETOR:', String(t.responsavelSetor || '').toUpperCase()) + lb('SETOR:', String(c.setor || '').toUpperCase()) + '</tr></table>';
-    h += '<table style="margin-top:6px"><tr><th ' + th + ' width="8%">QUANTIDADE</th><th ' + th + '>DESCRIÇÃO DO ITEM</th><th ' + th + ' width="11%">Nº DO PATRIMÔNIO</th><th ' + th + ' width="11%">DATA DA RETIRADA</th><th ' + th + ' width="12%">VISTO DO INTEGRANTE</th><th ' + th + ' width="11%">DATA DA DEVOLUÇÃO</th><th ' + th + ' width="12%">VISTO DO ALMOXARIFADO</th></tr>';
-    linhas.forEach(l => { h += l ? '<tr>' + td(l.qtd, 'text-align:center') + td(esc_(l.desc)) + td('') + td(dRet, 'text-align:center') + td(img(t.rubrica, 16), 'text-align:center;padding:0') + td(dd(l.dev), 'text-align:center') + td(l.dev ? img(l.dev.visto, 16) : '', 'text-align:center;padding:0') + '</tr>' : '<tr>' + td('') + td('') + td('') + td('') + td('') + td('') + td('') + '</tr>'; });
+    h += '<table style="margin-top:6px"><tr><th ' + th + ' width="8%">QUANTIDADE</th><th ' + th + '>DESCRIÇÃO DO ITEM</th><th ' + th + ' width="11%">Nº DA NOTA FISCAL</th><th ' + th + ' width="11%">DATA DA RETIRADA</th><th ' + th + ' width="12%">VISTO DO INTEGRANTE</th><th ' + th + ' width="11%">DATA DA DEVOLUÇÃO</th><th ' + th + ' width="12%">VISTO DO ALMOXARIFADO</th></tr>';
+    linhas.forEach(l => { h += l ? '<tr>' + td(l.qtd, 'text-align:center') + td(esc_(l.desc)) + td(esc_(l.nf), 'text-align:center') + td(dRet, 'text-align:center') + td(img(t.rubrica, 16), 'text-align:center;padding:0') + td(dd(l.dev), 'text-align:center') + td(l.dev ? img(l.dev.visto, 16) : '', 'text-align:center;padding:0') + '</tr>' : '<tr>' + td('') + td('') + td('') + td('') + td('') + td('') + td('') + '</tr>'; });
   } else {
-    h += '<table style="margin-top:6px"><tr><th ' + th + ' rowspan="2" width="7%">QUANT.</th><th ' + th + ' rowspan="2">DESCRIÇÃO DO ITEM</th><th ' + th + ' rowspan="2" width="8%">Nº DO PATRIM.</th><th ' + th + ' colspan="4">RETIRADA</th><th ' + th + ' colspan="2">DEVOLUÇÃO</th></tr><tr><th ' + th + ' width="8.5%">DATA</th><th ' + th + ' width="15%">NOME / MATRÍCULA</th><th ' + th + ' width="9.5%">VISTO DO INTEGRANTE</th><th ' + th + ' width="6.5%">OBRA</th><th ' + th + ' width="8.5%">DATA</th><th ' + th + ' width="9.5%">VISTO DO ALMOX.</th></tr>';
+    h += '<table style="margin-top:6px"><tr><th ' + th + ' rowspan="2" width="7%">QUANT.</th><th ' + th + ' rowspan="2">DESCRIÇÃO DO ITEM</th><th ' + th + ' rowspan="2" width="8%">Nº DA NOTA</th><th ' + th + ' colspan="4">RETIRADA</th><th ' + th + ' colspan="2">DEVOLUÇÃO</th></tr><tr><th ' + th + ' width="8.5%">DATA</th><th ' + th + ' width="15%">NOME / MATRÍCULA</th><th ' + th + ' width="9.5%">VISTO DO INTEGRANTE</th><th ' + th + ' width="6.5%">OBRA</th><th ' + th + ' width="8.5%">DATA</th><th ' + th + ' width="9.5%">VISTO DO ALMOX.</th></tr>';
     const nm = esc_(c.nome) + (c.matricula ? ' / ' + esc_(c.matricula) : '');
-    linhas.forEach(l => { h += l ? '<tr>' + td(l.qtd, 'text-align:center') + td(esc_(l.desc), 'font-size:7pt') + td('') + td(dRet, 'text-align:center;font-size:7pt') + td(nm, 'font-size:6.5pt') + td(img(t.rubrica, 16), 'text-align:center;padding:0') + td('GÁVEA', 'text-align:center;font-size:6.5pt') + td(dd(l.dev), 'text-align:center;font-size:7pt') + td(l.dev ? img(l.dev.visto, 16) : '', 'text-align:center;padding:0') + '</tr>' : '<tr>' + td('') + td('') + td('') + td('') + td('') + td('') + td('') + td('') + td('') + '</tr>'; });
+    linhas.forEach(l => { h += l ? '<tr>' + td(l.qtd, 'text-align:center') + td(esc_(l.desc), 'font-size:7pt') + td(esc_(l.nf), 'text-align:center;font-size:7pt') + td(dRet, 'text-align:center;font-size:7pt') + td(nm, 'font-size:6.5pt') + td(img(t.rubrica, 16), 'text-align:center;padding:0') + td('GÁVEA', 'text-align:center;font-size:6.5pt') + td(dd(l.dev), 'text-align:center;font-size:7pt') + td(l.dev ? img(l.dev.visto, 16) : '', 'text-align:center;padding:0') + '</tr>' : '<tr>' + td('') + td('') + td('') + td('') + td('') + td('') + td('') + td('') + td('') + '</tr>'; });
   }
   h += '</table>';
   h += '<div style="' + B + 'margin-top:6px;padding:5px 8px;font-size:7.5pt;line-height:1.4"><div style="text-align:center;font-weight:bold;margin-bottom:2px">DECLARAÇÃO DO RESPONSÁVEL</div>Como signatário do presente Termo de Responsabilidade, declaro para os devidos fins, que os bens aqui relacionados foram inventariados e localizados fisicamente, encontrando-se em bom estado de conservação. Reconhecendo a exatidão das informações aqui prestadas comprometo-me pela guarda e proteção desses bens, conservando-os adequadamente ficando assim, responsável pelo ônus da não observância destes cuidados. Autorizando desde já a empregadora o desconto em folha de pagamento do valor dos itens que por culpa ou dolo, sejam extraviados ou danificados.</div>';
