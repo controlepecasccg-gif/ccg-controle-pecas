@@ -23,3 +23,6 @@ Depois de colar o código: na planilha, menu **Controle de Peças › Ligar sinc
 Os **termos** também saem daqui: a cada 10 minutos o script monta os PDFs (FOR-SUP-001 e FOR-SUP-002) dos pedidos retirados ou devolvidos e guarda na pasta Termos › Empresa › Local › NF. Para forçar: menu **Controle de Peças › Enviar termos ao Drive agora**.
 
 Os **relatórios de conferência** também vão para o Drive, na mesma pasta da nota (Termos › Empresa › Local › NF): `Conferencia NF 64814 - Mills - rev1.pdf`. Numa correção, a versão anterior vira `... - rev1 - OBSOLETA.pdf`.
+
+## Pastas (versão 3)
+Em cada nota: `Empresa › Local › NF 0000 › 1 · Coleta` (conferência na fábrica), `2 · Recebimento` (conferência no canteiro, com fotos das avarias) e `3 · Termos`. Conferências mensais: `Conferências mensais › 2026-10 · 10-10-2026`, um PDF por frente e um resumo.

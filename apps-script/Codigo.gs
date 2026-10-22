@@ -130,6 +130,8 @@ function rodarAutomatico() {
   try { sincronizarUsuarios(); } catch (e) { console.error('usuários: ' + e.message); }
   try { enviarTermos(); } catch (e) { console.error('termos: ' + e.message); }
   try { enviarRelatorios(); } catch (e) { console.error('relatórios: ' + e.message); }
+  try { enviarRecebimentos(); } catch (e) { console.error('recebimentos: ' + e.message); }
+  try { enviarMensais(); } catch (e) { console.error('mensais: ' + e.message); }
 }
 function idt_(url, corpo) {
   const r = UrlFetchApp.fetch(url + '?key=' + API_KEY, { method: 'post', contentType: 'application/json', payload: JSON.stringify(corpo), muteHttpExceptions: true });
@@ -204,8 +206,9 @@ function enviarTermosAgora() {
   const ui = SpreadsheetApp.getUi(); const msg = [];
   try { const t = enviarTermos(true); msg.push(t.lidos ? 'Termos: ' + t.enviados + ' de ' + t.lidos + ' enviados.' : 'Termos: nenhum pendente.'); if (t.erros.length) msg.push('Erros nos termos:\n' + t.erros.join('\n')); }
   catch (e) { msg.push('Termos: não consegui enviar (' + e.message + ')'); }
-  try { const r = enviarRelatorios(true); msg.push(r.lidos ? 'Relatórios de conferência: ' + r.enviados + ' de ' + r.lidos + ' enviados.' : 'Relatórios de conferência: nenhum pendente.'); if (r.erros.length) msg.push('Erros nos relatórios:\n' + r.erros.join('\n')); }
-  catch (e) { msg.push('Relatórios: não consegui enviar (' + e.message + ')'); }
+  [['Coleta', enviarRelatorios], ['Recebimento no canteiro', enviarRecebimentos], ['Conferência mensal', enviarMensais]].forEach(([nome, fn]) => {
+    try { const r = fn(true); msg.push(r.lidos ? nome + ': ' + r.enviados + ' de ' + r.lidos + ' enviados.' : nome + ': nada pendente.'); if (r.erros.length) msg.push('Erros (' + nome + '):\n' + r.erros.join('\n')); }
+    catch (e) { msg.push(nome + ': não consegui enviar (' + e.message + ')'); } });
   ui.alert('Drive', msg.join('\n\n'), ui.ButtonSet.OK);
 }
 function fsLer_(v) {
@@ -249,7 +252,7 @@ function enviarTermos(detalhe) {
         const arquivos = ['colab', 'resp'].map(via => ({ nome: nomeTermo_(r, via), blob: pdfTermo_(r, via) }));
         const pastas = (r.termo.pastas && r.termo.pastas.length) ? r.termo.pastas : [{ empresa: 'Sem nota', local: r.destino, nf: 'Sem nota' }];
         pastas.forEach(p => {
-          const pasta = pasta_(pasta_(pasta_(raiz, p.empresa), p.local), p.nf);
+          const pasta = pasta_(pasta_(pasta_(pasta_(raiz, p.empresa), p.local), p.nf), '3 · Termos');
           arquivos.forEach(a => { const ant = pasta.getFilesByName(a.nome); while (ant.hasNext()) ant.next().setTrashed(true); pasta.createFile(a.blob.copyBlob().setName(a.nome)).setDescription('Pedido ' + (r.numero || '') + ' · gerado pelo Controle de Peças'); });
         });
         marcarDrive_(tk, r._id, { ok: true, versao: versao, em: new Date().toISOString() }); n++;
@@ -333,8 +336,8 @@ function enviarRelatorios(detalhe) {
       try {
         if (['em_conferencia', 'concluida'].indexOf(nota.status) < 0) { marcarDrive_(tk, nota._id, { ok: true, em: new Date().toISOString(), obs: 'sem conferência' }, 'notas'); return; }
         const emp = grupoEmpresa_(nota.fornecedor);
-        const pasta = pasta_(pasta_(pasta_(raiz, emp), nota.local || 'Sem local'), 'NF ' + (nota.numero || 's-n'));
-        const base = 'Conferencia NF ' + (nota.numero || '') + ' - ' + emp;
+        const pasta = pasta_(pasta_(pasta_(pasta_(raiz, emp), nota.local || 'Sem local'), 'NF ' + (nota.numero || 's-n')), '1 · Coleta');
+        const base = 'Coleta NF ' + (nota.numero || '') + ' - ' + emp;
         const salvar = (nome, blob) => { const ant = pasta.getFilesByName(nome); while (ant.hasNext()) ant.next().setTrashed(true); pasta.createFile(blob.setName(nome)).setDescription('Relatório de conferência · gerado pelo Controle de Peças'); };
         (nota.revisoes || []).forEach(v => { // versões anteriores: marcadas como obsoletas
           const velha = Object.assign({}, nota, { viagens: v.viagens || [], contagem: {}, assinaturas: v.assinaturas || [], status: 'concluida', concluidaEm: v.concluidaEm, conferente: v.conferente, revisao: v.rev, obsoleta: true, substituidaEm: v.substituidaEm, substituidaPor: v.substituidaPor, motivoRevisao: v.motivo });
@@ -369,7 +372,7 @@ function pdfRelatorio_(nt) {
   const td = 'padding:3px 5px;font-size:8pt;border-bottom:1px solid #EBEEE6';
   let h = '<html><head><meta charset="utf-8"><style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#13152B;font-size:8.5pt;margin:0}table{border-collapse:collapse;width:100%}</style></head><body>';
   if (nt.obsoleta) h += '<div style="border:3px solid #7A1556;color:#7A1556;text-align:center;font-size:26pt;font-weight:bold;letter-spacing:6px;padding:4px;margin-bottom:6px">OBSOLETO</div>';
-  h += '<table><tr><td style="width:40%"><img src="data:image/jpeg;base64,' + LOGO_CCG + '" style="height:36px"></td><td style="text-align:right"><div style="font-size:6.5pt;letter-spacing:2px;color:#5E7020;font-weight:bold">LINHA 4 · EXTENSÃO GÁVEA · CONTROLE DE PEÇAS</div><div style="font-size:14pt;font-weight:bold">Relatório de conferência de recebimento</div></td></tr></table>';
+  h += '<table><tr><td style="width:40%"><img src="data:image/jpeg;base64,' + LOGO_CCG + '" style="height:36px"></td><td style="text-align:right"><div style="font-size:6.5pt;letter-spacing:2px;color:#5E7020;font-weight:bold">LINHA 4 · EXTENSÃO GÁVEA · CONTROLE DE PEÇAS</div><div style="font-size:14pt;font-weight:bold">Relatório da coleta (conferência na fábrica)</div></td></tr></table>';
   h += '<div style="border-top:3px solid #AEC155;margin:6px 0"></div>';
   if (revTxt) h += '<div style="padding:5px 8px;background:' + (nt.obsoleta ? '#FBE4F1' : '#FBF3DD') + ';color:' + (nt.obsoleta ? '#7A1556' : '#5C4300') + ';font-size:7.5pt;font-weight:bold;margin-bottom:6px">' + esc_(revTxt) + '</div>';
   h += '<table><tr><td style="width:46px">' + (LG ? '<img src="data:image/png;base64,' + LG + '" style="width:40px;height:40px">' : '') + '</td><td><div style="font-size:16pt;font-weight:bold">NF ' + esc_(nt.numero) + ' · ' + esc_(emp) + '</div><div style="font-size:7.5pt;color:#4E5752">' + esc_(nt.fornecedor || '') + (nt.contrato ? ' · contrato ' + esc_(nt.contrato) : '') + '</div></td><td style="text-align:right"><span style="border:1.5px solid ' + sit[1] + ';color:' + sit[1] + ';font-weight:bold;font-size:8pt;padding:4px 8px">' + sit[0] + '</span>' + (nt.emissao ? '<div style="font-size:7pt;color:#4E5752;margin-top:4px">Emitida em ' + esc_(nt.emissao) + '</div>' : '') + '</td></tr></table>';
@@ -395,3 +398,123 @@ function pdfRelatorio_(nt) {
 const LOGO_MILLS = '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';
 const LOGO_SH = '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';
 const LOGO_PERI = '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';
+
+/* ---------------- Recebimento no canteiro (com as fotos das avarias) ---------------- */
+function lerFoto_(tk, id) {
+  try { const r = UrlFetchApp.fetch(FS + '/fotos/' + encodeURIComponent(id), { headers: { Authorization: 'Bearer ' + tk }, muteHttpExceptions: true });
+    if (r.getResponseCode() !== 200) return null; const j = JSON.parse(r.getContentText()); return j.fields && j.fields.dados ? j.fields.dados.stringValue : null; } catch (e) { return null; }
+}
+function cabecalho_(titulo, sub) {
+  return '<table><tr><td style="width:40%"><img src="data:image/jpeg;base64,' + LOGO_CCG + '" style="height:36px"></td><td style="text-align:right"><div style="font-size:6.5pt;letter-spacing:2px;color:#5E7020;font-weight:bold">LINHA 4 · EXTENSÃO GÁVEA · CONTROLE DE PEÇAS</div><div style="font-size:14pt;font-weight:bold">' + esc_(titulo) + '</div>' + (sub ? '<div style="font-size:7.5pt;color:#4E5752">' + esc_(sub) + '</div>' : '') + '</td></tr></table><div style="border-top:3px solid #AEC155;margin:6px 0 8px"></div>';
+}
+const CSS_PDF_ = '<style>@page{size:A4;margin:12mm}body{font-family:Arial,sans-serif;color:#13152B;font-size:8.5pt;margin:0}table{border-collapse:collapse;width:100%}</style>';
+function fotosHtml_(lista, fotos) { // [{rot, ids}]
+  let h = ''; lista.forEach(x => (x.ids || []).forEach((id, k) => { if (fotos[id]) h += '<div style="display:inline-block;width:31%;margin:0 1.5% 10px 0;vertical-align:top"><img src="' + fotos[id] + '" style="width:100%;border:1px solid #D7DBD0"><div style="font-size:7pt;color:#4E5752">' + esc_(x.rot) + ' · ' + (k + 1) + '/' + x.ids.length + '</div></div>'; }));
+  return h;
+}
+function enviarRecebimentos(detalhe) {
+  const lock = LockService.getScriptLock(); if (!lock.tryLock(20000)) { if (detalhe) throw new Error('outra sincronização está rodando, tente em 1 minuto'); return 0; }
+  let n = 0, lidos = 0; const erros = [];
+  try {
+    const tk = tokenRobo_(); const raiz = DriveApp.getFolderById(PASTA_TERMOS_ID);
+    const lista = pendentesCampo_(tk, 'notas', 'recebDrive.ok'); lidos = lista.length;
+    lista.forEach(nota => {
+      const marcar = (d) => UrlFetchApp.fetch(FS + '/notas/' + encodeURIComponent(nota._id) + '?updateMask.fieldPaths=recebDrive', { method: 'patch', contentType: 'application/json', headers: { Authorization: 'Bearer ' + tk }, muteHttpExceptions: true, payload: JSON.stringify({ fields: { recebDrive: fsEsc_(d) } }) });
+      try {
+        if (!nota.receb || nota.receb.status !== 'concluido') { marcar({ ok: true, obs: 'sem recebimento' }); return; }
+        const emp = grupoEmpresa_(nota.fornecedor);
+        const pasta = pasta_(pasta_(pasta_(pasta_(raiz, emp), nota.local || 'Sem local'), 'NF ' + (nota.numero || 's-n')), '2 · Recebimento');
+        const nome = semAcento_('Recebimento NF ' + (nota.numero || '') + ' - ' + emp + '.pdf');
+        const ant = pasta.getFilesByName(nome); while (ant.hasNext()) ant.next().setTrashed(true);
+        pasta.createFile(pdfRecebimento_(nota, tk).setName(nome)).setDescription('Recebimento no canteiro · gerado pelo Controle de Peças');
+        marcar({ ok: true, em: new Date().toISOString() }); n++;
+      } catch (err) { erros.push('NF ' + (nota.numero || nota._id) + ': ' + err.message); marcar({ ok: false, erro: String(err.message || err).slice(0, 120), em: new Date().toISOString() }); }
+    });
+  } finally { lock.releaseLock(); }
+  return detalhe ? { enviados: n, lidos: lidos, erros: erros } : n;
+}
+function pendentesCampo_(tk, colecao, campo) {
+  const r = UrlFetchApp.fetch(FS + ':runQuery', { method: 'post', contentType: 'application/json', headers: { Authorization: 'Bearer ' + tk }, muteHttpExceptions: true,
+    payload: JSON.stringify({ structuredQuery: { from: [{ collectionId: colecao }], where: { fieldFilter: { field: { fieldPath: campo }, op: 'EQUAL', value: { booleanValue: false } } }, limit: 15 } }) });
+  if (r.getResponseCode() !== 200) throw new Error('não consegui ler ' + colecao + ': ' + r.getContentText().slice(0, 200));
+  return JSON.parse(r.getContentText() || '[]').filter(x => x.document).map(x => { const o = {}; const f = x.document.fields || {}; Object.keys(f).forEach(k => o[k] = fsLer_(f[k])); o._id = x.document.name.split('/').pop(); return o; });
+}
+function pdfRecebimento_(nt, tk) {
+  const it = nt.receb.itens || {}; const emp = grupoEmpresa_(nt.fornecedor);
+  let col = 0, q = 0, av = 0, avV = 0, fa = 0, qn = 0; const lista = [];
+  (nt.itens || []).forEach(i => { const x = it[i.key] || {}; qn += Number(i.qtd) || 0; col += x.col || 0; q += x.q || 0; av += x.avq || 0; avV += (x.avq || 0) * (i.vu || 0); fa += Math.max(0, (x.col || 0) - (x.q || 0)); if ((x.fotos || []).length) lista.push({ rot: i.desc, ids: x.fotos }); });
+  const fotos = {}; lista.forEach(x => x.ids.forEach(id => { fotos[id] = lerFoto_(tk, id); }));
+  const sit = av ? ['RECEBIDA COM AVARIA', '#7A1556'] : fa ? ['RECEBIDA COM FALTA', '#7A1556'] : ['RECEBIDA SEM DIFERENÇA', '#10543A'];
+  const LG = { mills: LOGO_MILLS, sh: LOGO_SH, peri: LOGO_PERI }[emp.toLowerCase()];
+  let h = '<html><head><meta charset="utf-8">' + CSS_PDF_ + '</head><body>' + cabecalho_('Relatório de recebimento no canteiro', '');
+  h += '<table><tr><td style="width:46px">' + (LG ? '<img src="data:image/png;base64,' + LG + '" style="width:40px;height:40px">' : '') + '</td><td><div style="font-size:16pt;font-weight:bold">NF ' + esc_(nt.numero) + ' · ' + esc_(emp) + '</div><div style="font-size:7.5pt;color:#4E5752">' + esc_(nt.local || '') + ' · recebida ' + dataBR_(nt.receb.em, 'dd/MM/yyyy HH:mm') + ' · conferente ' + esc_(nt.receb.por || '') + '</div></td><td style="text-align:right"><span style="border:1.5px solid ' + sit[1] + ';color:' + sit[1] + ';font-weight:bold;font-size:8pt;padding:4px 8px">' + sit[0] + '</span></td></tr></table>';
+  const kpi = (v, l, c) => '<td style="border:1px solid #D7DBD0;padding:6px 8px"><div style="font-size:13pt;font-weight:bold;' + (c ? 'color:' + c : '') + '">' + v + '</div><div style="font-size:7pt;color:#4E5752">' + l + '</div></td>';
+  h += '<table style="margin-top:8px"><tr>' + kpi(nfmt_(qn), 'na nota') + kpi(nfmt_(col), 'na coleta') + kpi(nfmt_(q), 'no canteiro') + kpi(nfmt_(av), 'avariadas', av ? '#7A1556' : '') + kpi(brl_(avV), 'valor avariado', avV ? '#7A1556' : '') + '</tr></table>';
+  const th = (t, a) => '<th style="padding:4px 5px;font-size:7pt;text-transform:uppercase;color:#4E5752;text-align:' + a + ';border-bottom:1.5px solid #13152B">' + t + '</th>';
+  h += '<table style="margin-top:10px"><tr>' + th('Descrição', 'left') + th('Nota', 'right') + th('Coleta', 'right') + th('Canteiro', 'right') + th('Avariadas', 'right') + th('Observação', 'left') + '</tr>';
+  (nt.itens || []).forEach(i => { const x = it[i.key] || {}; const ruim = (x.avq || 0) > 0 || (x.q || 0) !== (x.col || 0); const td = 'padding:3px 5px;font-size:8pt;border-bottom:1px solid #EBEEE6';
+    const obs = [x.obs, (x.q || 0) < (x.col || 0) ? ((x.col || 0) - (x.q || 0)) + ' a menos que a coleta' : '', (x.q || 0) > (x.col || 0) ? '+' + ((x.q || 0) - (x.col || 0)) + ' a mais' : ''].filter(Boolean).join(' · ');
+    h += '<tr style="background:' + (ruim ? '#FBF3F7' : '#fff') + '"><td style="' + td + '">' + esc_(i.desc) + '</td><td style="' + td + ';text-align:right">' + i.qtd + '</td><td style="' + td + ';text-align:right">' + (x.col || 0) + '</td><td style="' + td + ';text-align:right;font-weight:bold">' + (x.q || 0) + '</td><td style="' + td + ';text-align:right;color:#7A1556;font-weight:bold">' + (x.avq || '—') + '</td><td style="' + td + ';color:#4E5752">' + esc_(obs) + '</td></tr>'; });
+  h += '</table>';
+  if (lista.length) h += '<div style="font-weight:bold;font-size:10pt;margin:14px 0 6px">Fotos das avarias</div>' + fotosHtml_(lista, fotos);
+  const a = nt.receb.assinaturas;
+  if (a) h += '<table style="margin-top:20px"><tr>' + [[a.conf, a.confNome, 'Conferente · CCG'], [a.rep, a.repNome, 'Representante ' + emp]].map(x => '<td style="width:50%;text-align:center;padding:0 18px"><div style="height:42px">' + (x[0] ? '<img src="' + x[0] + '" style="height:40px">' : '') + '</div><div style="border-top:1px solid #13152B;font-size:8pt;font-weight:bold;padding-top:2px">' + esc_(x[1] || '') + '</div><div style="font-size:7pt;color:#4E5752">' + x[2] + '</div></td>').join('') + '</tr></table>';
+  h += '<div style="margin-top:12px;border-top:1px solid #D7DBD0;padding-top:3px;font-size:6.5pt;color:#8A9289">Gerado pelo Controle de Peças · CCG · ' + dataBR_(new Date().toISOString(), 'dd/MM/yyyy HH:mm') + '</div></body></html>';
+  return Utilities.newBlob(h, 'text/html', 'recebimento.html').getAs('application/pdf');
+}
+
+/* ---------------- Conferência mensal (dia 10): um PDF por frente e um resumo do mês ---------------- */
+function enviarMensais(detalhe) {
+  const lock = LockService.getScriptLock(); if (!lock.tryLock(20000)) { if (detalhe) throw new Error('outra sincronização está rodando, tente em 1 minuto'); return 0; }
+  let n = 0, lidos = 0; const erros = [];
+  try {
+    const tk = tokenRobo_(); const raiz = DriveApp.getFolderById(PASTA_TERMOS_ID);
+    const lista = pendentesCampo_(tk, 'conferencias', 'drive.ok'); lidos = lista.length; const meses = {};
+    lista.forEach(d => {
+      try {
+        const pasta = pasta_(pasta_(raiz, 'Conferências mensais'), d.mes + ' · ' + dataBR_(d.data + 'T12:00:00', 'dd-MM-yyyy'));
+        const nome = semAcento_('Conferencia mensal ' + dataBR_(d.data + 'T12:00:00', 'dd-MM-yyyy') + ' - ' + d.local + '.pdf').replace(/[\\/:*?"<>|]/g, '-');
+        const ant = pasta.getFilesByName(nome); while (ant.hasNext()) ant.next().setTrashed(true);
+        pasta.createFile(pdfMensal_([d], tk).setName(nome)).setDescription('Conferência mensal · gerado pelo Controle de Peças');
+        marcarDrive_(tk, d._id, { ok: true, em: new Date().toISOString() }, 'conferencias'); meses[d.mes] = pasta; n++;
+      } catch (err) { erros.push(d.local + ': ' + err.message); marcarDrive_(tk, d._id, { ok: false, erro: String(err.message || err).slice(0, 120), em: new Date().toISOString() }, 'conferencias'); }
+    });
+    Object.keys(meses).forEach(mes => { // resumo do mês com todas as frentes já conferidas
+      try {
+        const r = UrlFetchApp.fetch(FS + ':runQuery', { method: 'post', contentType: 'application/json', headers: { Authorization: 'Bearer ' + tk }, muteHttpExceptions: true,
+          payload: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'conferencias' }], where: { fieldFilter: { field: { fieldPath: 'mes' }, op: 'EQUAL', value: { stringValue: mes } } } } }) });
+        const docs = JSON.parse(r.getContentText() || '[]').filter(x => x.document).map(x => { const o = {}; const f = x.document.fields || {}; Object.keys(f).forEach(k => o[k] = fsLer_(f[k])); return o; }).sort((a, b) => a.local.localeCompare(b.local));
+        if (!docs.length) return;
+        const nome = semAcento_('Conferencia mensal ' + dataBR_(docs[0].data + 'T12:00:00', 'dd-MM-yyyy') + ' - Resumo.pdf');
+        const ant = meses[mes].getFilesByName(nome); while (ant.hasNext()) ant.next().setTrashed(true);
+        meses[mes].createFile(pdfMensal_(docs, tk, true).setName(nome));
+      } catch (err) { erros.push('resumo ' + mes + ': ' + err.message); }
+    });
+  } finally { lock.releaseLock(); }
+  return detalhe ? { enviados: n, lidos: lidos, erros: erros } : n;
+}
+function pdfMensal_(docs, tk, resumo) {
+  const tit = 'Conferência mensal · ' + dataBR_(docs[0].data + 'T12:00:00');
+  const th = (t, a) => '<th style="padding:4px 5px;font-size:7pt;text-transform:uppercase;color:#4E5752;text-align:' + a + ';border-bottom:1.5px solid #13152B">' + t + '</th>';
+  const td = 'padding:3px 5px;font-size:8pt;border-bottom:1px solid #EBEEE6';
+  const res = (d) => { let esp = 0, cont = 0, perd = 0, dan = 0, val = 0; (d.itens || []).forEach(i => { esp += i.esperado || 0; cont += i.contado || 0; perd += i.perdidas || 0; dan += i.danificadas || 0; val += ((i.perdidas || 0) + (i.danificadas || 0)) * (i.vu || 0); }); return { esp, cont, perd, dan, val }; };
+  let h = '<html><head><meta charset="utf-8">' + CSS_PDF_ + '</head><body>';
+  if (resumo) {
+    h += cabecalho_(tit, 'Resumo de todas as frentes conferidas');
+    h += '<table><tr>' + th('Frente', 'left') + th('Conferido por', 'left') + th('Esperadas', 'right') + th('Contadas', 'right') + th('Perdidas', 'right') + th('Danificadas', 'right') + th('Valor', 'right') + '</tr>';
+    const t = { esp: 0, cont: 0, perd: 0, dan: 0, val: 0 };
+    docs.forEach(d => { const r = res(d); Object.keys(t).forEach(k => t[k] += r[k]); h += '<tr><td style="' + td + ';font-weight:bold">' + esc_(d.local) + '</td><td style="' + td + '">' + esc_(d.por) + ' · ' + dataBR_(d.em, 'dd/MM HH:mm') + '</td><td style="' + td + ';text-align:right">' + r.esp + '</td><td style="' + td + ';text-align:right">' + r.cont + '</td><td style="' + td + ';text-align:right;color:#7A1556">' + (r.perd || '—') + '</td><td style="' + td + ';text-align:right;color:#7A1556">' + (r.dan || '—') + '</td><td style="' + td + ';text-align:right">' + (r.val ? brl_(r.val) : '—') + '</td></tr>'; });
+    h += '<tr><td style="padding:5px;font-weight:bold;border-top:1.5px solid #13152B" colspan="2">Total</td><td style="padding:5px;text-align:right;font-weight:bold;border-top:1.5px solid #13152B">' + t.esp + '</td><td style="padding:5px;text-align:right;font-weight:bold;border-top:1.5px solid #13152B">' + t.cont + '</td><td style="padding:5px;text-align:right;font-weight:bold;border-top:1.5px solid #13152B;color:#7A1556">' + t.perd + '</td><td style="padding:5px;text-align:right;font-weight:bold;border-top:1.5px solid #13152B;color:#7A1556">' + t.dan + '</td><td style="padding:5px;text-align:right;font-weight:bold;border-top:1.5px solid #13152B">' + brl_(t.val) + '</td></tr></table>';
+  } else {
+    const d = docs[0]; const r = res(d); const lista = (d.itens || []).filter(i => (i.fotos || []).length).map(i => ({ rot: i.desc, ids: i.fotos }));
+    const fotos = {}; lista.forEach(x => x.ids.forEach(id => { fotos[id] = lerFoto_(tk, id); }));
+    h += cabecalho_(tit, d.local + ' · conferido por ' + d.por + ' em ' + dataBR_(d.em, 'dd/MM/yyyy HH:mm'));
+    h += '<div style="font-size:10pt;margin-bottom:6px"><b>' + nfmt_(r.cont) + '</b> de <b>' + nfmt_(r.esp) + '</b> peças · <b style="color:#7A1556">' + r.perd + ' perdidas</b> · <b style="color:#7A1556">' + r.dan + ' danificadas</b>' + (r.val ? ' · ' + brl_(r.val) : '') + '</div>';
+    h += '<table><tr>' + th('Peça', 'left') + th('Esperadas', 'right') + th('Contadas', 'right') + th('Perdidas', 'right') + th('Danificadas', 'right') + th('Observação', 'left') + '</tr>';
+    (d.itens || []).forEach(i => { h += '<tr style="background:' + ((i.perdidas || i.danificadas) ? '#FBF3F7' : '#fff') + '"><td style="' + td + '">' + esc_(i.desc) + '</td><td style="' + td + ';text-align:right">' + i.esperado + '</td><td style="' + td + ';text-align:right;font-weight:bold">' + i.contado + '</td><td style="' + td + ';text-align:right;color:#7A1556;font-weight:bold">' + (i.perdidas || '—') + '</td><td style="' + td + ';text-align:right;color:#7A1556;font-weight:bold">' + (i.danificadas || '—') + '</td><td style="' + td + ';color:#4E5752">' + esc_(i.obs || '') + '</td></tr>'; });
+    h += '</table>';
+    if (lista.length) h += '<div style="font-weight:bold;font-size:10pt;margin:14px 0 6px">Fotos das peças danificadas</div>' + fotosHtml_(lista, fotos);
+  }
+  h += '<div style="margin-top:12px;border-top:1px solid #D7DBD0;padding-top:3px;font-size:6.5pt;color:#8A9289">Gerado pelo Controle de Peças · CCG · ' + dataBR_(new Date().toISOString(), 'dd/MM/yyyy HH:mm') + '</div></body></html>';
+  return Utilities.newBlob(h, 'text/html', 'mensal.html').getAs('application/pdf');
+}

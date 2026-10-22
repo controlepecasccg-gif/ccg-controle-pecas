@@ -159,7 +159,7 @@ textarea.inp{height:auto;min-height:88px;padding:12px 16px;line-height:1.45}
 /* navegação inferior */
 .bottomnav{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;justify-content:center;pointer-events:none}
 .bottomnav .in{display:flex;max-width:720px;width:100%;background:#fff;border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom);pointer-events:auto}
-.bottomnav button{flex:1;min-height:var(--nav-h);border:none;background:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:12px;font-weight:600;color:var(--muted);border-top:3px solid transparent;position:relative}
+.bottomnav button{flex:1;min-height:var(--nav-h);border:none;background:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:10.5px;letter-spacing:-.01em;font-weight:600;color:var(--muted);border-top:3px solid transparent;position:relative;min-width:0;padding:0 1px}
 .bottomnav button.on{color:var(--navy);border-top-color:var(--green)}
 .badge{position:absolute;top:6px;left:calc(50% + 6px);background:var(--mag);color:#fff;font-size:11px;font-weight:700;border-radius:999px;min-width:18px;height:18px;padding:0 5px;display:flex;align-items:center;justify-content:center}
 .rodape{position:fixed;left:0;right:0;bottom:calc(var(--nav-h) + env(safe-area-inset-bottom));z-index:25;display:flex;justify-content:center;pointer-events:none}
@@ -308,7 +308,7 @@ const DRIVE_URL_PADRAO = 'https://script.google.com/macros/s/AKfycbyZeq0FGOPlfwy
 function urlScript() { return (config().driveURL || DRIVE_URL_PADRAO || '').trim(); }
 const HORA_LIMITE_PEDIDO = 16; // pedidos para o dia seguinte até 16h
 const DIAS_PARADA_ALERTA = 7;  // peça aguardando há mais de X dias = alerta
-const APP_VERSAO = '2.1.0';
+const APP_VERSAO = '3.0.0';
 const DWG_MAX_MB = 25; // DWG guardado em partes no Firestore (plano gratuito)
 
 const LOCAIS_PADRAO = ['Passagem de emergência', 'SSR 04', 'Apêndice', 'Carioca', 'Túnel de Interligação', 'Jardim Oceânico'];
@@ -336,10 +336,13 @@ function pode(u, acao, local) {
   if (acao === 'frente' && u.perfil === 'frente' && u.local && local && local !== u.local) return false;
   return true;
 }
+// ids antigos mantidos: 'receb' é a Coleta (na fábrica) e 'cd' é a aba Frentes
 const ABAS = [
-  { id: 'receb', nome: 'Recebimento', d: 'M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8zM14 3v5h5' },
-  { id: 'cd', nome: 'CD', d: 'M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10' },
+  { id: 'receb', nome: 'Coleta', d: 'M3 7h11v9H3zM14 10h4l3 3v3h-7M7 19a2 2 0 1 0 0-.1M17 19a2 2 0 1 0 0-.1' },
+  { id: 'canteiro', nome: 'Recebimento', d: 'M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8zM14 3v5h5' },
+  { id: 'cd', nome: 'Frentes', d: 'M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11zM12 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5' },
   { id: 'pedidos', nome: 'Pedidos', d: 'M4 5h16l-2 9H7zM7 14l-1 4h13' },
+  { id: 'conf', nome: 'Conferência', d: 'M9 11l3 3 8-8M20 12v7a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h11' },
   { id: 'gestao', nome: 'Gestão', d: 'M4 20V10M10 20V4M16 20v-7M22 20H2' }
 ];
 
@@ -407,8 +410,9 @@ async function comprimirImagem(fileOrCanvas, maxLado, qualidade) {
 }
 
 /* ================= ARMAZENAMENTO (Firestore ou local) ================= */
-const COLS = ['notas', 'catalogo', 'remessas', 'movimentos', 'contagens', 'pendencias', 'projetos', 'usuarios', 'config'];
+const COLS = ['notas', 'catalogo', 'remessas', 'movimentos', 'contagens', 'pendencias', 'projetos', 'usuarios', 'config', 'conferencias'];
 const LS_KEY = 'ccg_pecas_demo_v1';
+const _fotos = {};
 function criarStore() {
   const cache = {}; COLS.forEach(c => cache[c] = {});
   const pend = {}; // docs aguardando sinal (Firestore)
@@ -438,6 +442,18 @@ function criarStore() {
       let s = '';
       for (let i = 0; i < partes; i++) { const d = await fs.collection('arquivos').doc(id + '_' + i).get(); if (!d.exists) throw new Error('Arquivo incompleto (parte ' + (i + 1) + ').'); s += d.data().dados; }
       return s;
+    },
+    // Fotos (avarias): uma por documento na coleção "fotos", lidas sob demanda
+    async salvarFoto(dataUrl) {
+      const id = uid('ft');
+      if (modo === 'firebase') { fs.collection('fotos').doc(id).set({ id, dados: dataUrl, em: agoraISO() }).catch(e => console.error(e)); }
+      else { try { const o = JSON.parse(localStorage.getItem('ccg_fotos_demo') || '{}'); o[id] = dataUrl; localStorage.setItem('ccg_fotos_demo', JSON.stringify(o)); } catch (e) {} }
+      _fotos[id] = dataUrl; return id;
+    },
+    async lerFoto(id) {
+      if (_fotos[id]) return _fotos[id];
+      if (modo === 'firebase') { const d = await fs.collection('fotos').doc(id).get(); if (d.exists) return (_fotos[id] = d.data().dados); return null; }
+      try { return (_fotos[id] = JSON.parse(localStorage.getItem('ccg_fotos_demo') || '{}')[id] || null); } catch (e) { return null; }
     },
     assinar(f) { subs.add(f); return () => subs.delete(f); },
     todos(c) { return Object.values(cache[c] || {}); },
@@ -493,11 +509,15 @@ function useStore() {
 }
 
 /* ================= REGRAS DE NEGÓCIO ================= */
-// Lugares: 'CD' | 'TR:<remessa>' (em trânsito) | 'F:<local>' (frente) | 'FORN:<fornecedor>' (devolvido)
+// Lugares: 'CAM' (a caminho: conferida na coleta, ainda não recebida no canteiro) | 'F:<local>' (na frente)
+//          'COL:<local>' (com colaborador, retirada com termo) | 'FORN:<fornecedor>' (devolvido)
+//          'TR:<remessa>' e 'CD' só em dados antigos
 //          'PEND:<pendencia>' (falta em apuração) | 'PERDA' | 'SOBRA'
 const nomeLugar = (l) => {
   if (!l) return '—';
   if (l === 'CD') return 'CD';
+  if (l === 'CAM') return 'A caminho';
+  if (l.startsWith('COL:')) return 'Com colaborador · ' + l.slice(4);
   if (l.startsWith('F:')) return l.slice(2);
   if (l.startsWith('TR:')) return 'Em trânsito';
   if (l.startsWith('FORN:')) return 'Devolvido · ' + l.slice(5);
@@ -560,13 +580,15 @@ function movFIFO(tipo, key, qtd, de, para, ref, quem, nfFixa) {
 function distribuicaoNF() {
   return memo('distNF', () => {
     const s = saldosNF(); const out = {}; const ord = ordemNotas();
-    const get = (nf, key) => out[nf + '|' + key] || (out[nf + '|' + key] = { cd: 0, frentes: {}, transito: 0, falta: 0, perda: 0, devolvido: 0 });
+    const get = (nf, key) => out[nf + '|' + key] || (out[nf + '|' + key] = { cd: 0, frentes: {}, transito: 0, falta: 0, perda: 0, devolvido: 0, caminho: 0, colab: 0, colabF: {} });
     const porFrente = {}; // 'local|key' -> [{nf,q}]
     Object.keys(s).forEach(k => {
       const i = k.lastIndexOf('|'); const l = k.slice(0, i), key = k.slice(i + 1);
       Object.keys(s[k]).forEach(nf => {
         const q = s[k][nf]; if (!q) return; const d = get(nf, key);
         if (l === 'CD') d.cd += q;
+        else if (l === 'CAM') d.caminho += q;
+        else if (l.startsWith('COL:')) { d.colab += q; d.colabF[l.slice(4)] = (d.colabF[l.slice(4)] || 0) + q; }
         else if (l.startsWith('F:')) { const loc = l.slice(2); (porFrente[loc + '|' + key] = porFrente[loc + '|' + key] || []).push({ nf, q }); }
         else if (l.startsWith('TR:')) d.transito += q;
         else if (l.startsWith('PEND:')) d.falta += q;
@@ -591,20 +613,23 @@ function distribuicaoNF() {
 function resumoNota(n) {
   const dist = distribuicaoNF(); const conferida = n.status === 'concluida';
   const itens = (n.itens || []).map(i => {
-    const d = dist[n.id + '|' + i.key] || { cd: 0, frentes: {}, transito: 0, falta: 0, perda: 0, devolvido: 0 };
+    const d = dist[n.id + '|' + i.key] || { cd: 0, frentes: {}, transito: 0, falta: 0, perda: 0, devolvido: 0, caminho: 0, colab: 0, colabF: {} };
     let ag = 0, mo = 0; Object.values(d.frentes).forEach(f => { ag += f.ag; mo += f.mo; });
-    const aConferir = conferida ? 0 : Math.max(0, i.qtd - d.cd - ag - mo - d.transito - d.falta - d.perda - d.devolvido);
-    return Object.assign({}, i, { cd: d.cd, frentes: d.frentes, ag, mo, transito: d.transito, falta: d.falta, perda: d.perda, devolvido: d.devolvido, aConferir });
+    const aConferir = conferida ? 0 : Math.max(0, i.qtd - d.cd - ag - mo - d.transito - d.falta - d.perda - d.devolvido - d.caminho - d.colab);
+    return Object.assign({}, i, { cd: d.cd, frentes: d.frentes, ag, mo, transito: d.transito, falta: d.falta, perda: d.perda, devolvido: d.devolvido, caminho: d.caminho, colab: d.colab, colabF: d.colabF, aConferir });
   });
   const soma = (k) => itens.reduce((t, x) => t + (x[k] || 0), 0);
-  return { nota: n, itens, qtd: soma('qtd'), cd: soma('cd'), ag: soma('ag'), mo: soma('mo'), transito: soma('transito'), falta: soma('falta'), perda: soma('perda'), devolvido: soma('devolvido'), aConferir: soma('aConferir'), conferida };
+  return { nota: n, itens, qtd: soma('qtd'), cd: soma('cd'), ag: soma('ag'), mo: soma('mo'), transito: soma('transito'), falta: soma('falta'), perda: soma('perda'), devolvido: soma('devolvido'), caminho: soma('caminho'), colab: soma('colab'), aConferir: soma('aConferir'), conferida };
 }
 // Notas de um local da aplicação, com totais
 function visaoLocal(local) {
   const notas = store.todos('notas').filter(n => n.local === local && n.status !== 'rascunho').sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''));
   const rs = notas.map(resumoNota);
   const soma = (k) => rs.reduce((t, x) => t + x[k], 0);
-  return { local, notas: rs, qtd: soma('qtd'), cd: soma('cd'), ag: soma('ag'), mo: soma('mo'), transito: soma('transito'), falta: soma('falta'), perda: soma('perda'), devolvido: soma('devolvido'), aConferir: soma('aConferir') };
+  // "com colaborador" conta pela frente onde a peça foi retirada (pode ser de nota de outro local)
+  const colab = Object.values(saldoLugar('COL:' + local)).reduce((a, b) => a + b, 0);
+  const naFrente = Object.values(saldoLugar('F:' + local)).reduce((a, b) => a + b, 0);
+  return { local, notas: rs, qtd: soma('qtd'), cd: soma('cd'), ag: soma('ag'), mo: soma('mo'), transito: soma('transito'), falta: soma('falta'), perda: soma('perda'), devolvido: soma('devolvido'), caminho: soma('caminho'), colab, naFrente, aConferir: soma('aConferir') };
 }
 function saldoLugar(lugar, s) {
   s = s || saldos(); const out = {};
@@ -1119,14 +1144,17 @@ function NetPill({ soAlerta }) {
   if (store.modo === 'demo') return html`<span className=${'pill' + (on ? '' : ' off')}>Demo</span>`;
   return html`<span className=${'pill' + (on && !p ? '' : ' off')}>${on ? (p ? 'Enviando…' : 'Online') : 'Offline' + (p ? ' · ' + p : '')}</span>`;
 }
-// barra: no CD / na frente de serviço / em falta
+// situação das peças: a caminho (só entre coleta e canteiro) / na frente / com colaborador / em falta
+function numsDe(r) { return { cam: r.caminho || 0, fr: r.naFrente != null ? r.naFrente : r.ag + r.mo + (r.transito || 0) + (r.cd || 0), col: r.colab || 0, fa: r.falta || 0 }; }
 function BarraLocal({ r }) {
-  const fr = r.ag + r.mo + (r.transito || 0); const t = Math.max(1, r.cd + fr + r.falta);
-  return html`<div className="bar"><div style=${{ width: r.cd / t * 100 + '%', background: CORES.cd }}></div><div style=${{ width: fr / t * 100 + '%', background: CORES.mo }}></div><div style=${{ width: r.falta / t * 100 + '%', background: CORES.fa }}></div></div>`;
+  const n = numsDe(r); const t = Math.max(1, n.cam + n.fr + n.col + n.fa);
+  return html`<div className="bar"><div style=${{ width: n.cam / t * 100 + '%', background: CORES.tr }}></div><div style=${{ width: n.fr / t * 100 + '%', background: CORES.cd }}></div><div style=${{ width: n.col / t * 100 + '%', background: CORES.mo }}></div><div style=${{ width: n.fa / t * 100 + '%', background: CORES.fa }}></div></div>`;
 }
 function Num4({ r }) {
-  const it = (v, l, c, cor) => html`<span><b style=${{ color: cor || 'inherit' }}>${nfmt(v)}</b><span className="t3"><span className="sw" style=${{ background: c }}></span>${l}</span></span>`;
-  return html`<div className="num4">${it(r.cd, 'no CD', CORES.cd)}${it(r.ag + r.mo + (r.transito || 0), 'na frente', CORES.mo)}${it(r.falta, 'em falta', CORES.fa, r.falta ? 'var(--mag-t)' : null)}</div>`;
+  const n = numsDe(r);
+  const it = (v, l, c, cor) => html`<span key=${l}><b style=${{ color: cor || 'inherit' }}>${nfmt(v)}</b><span className="t3"><span className="sw" style=${{ background: c }}></span>${l}</span></span>`;
+  const cols = [n.cam > 0 && it(n.cam, 'a caminho', CORES.tr), it(n.fr, 'na frente', CORES.cd), it(n.col, 'com colaborador', CORES.mo), it(n.fa, 'em falta', CORES.fa, n.fa ? 'var(--mag-t)' : null)].filter(Boolean);
+  return html`<div className="num4" style=${{ gridTemplateColumns: 'repeat(' + cols.length + ',minmax(0,1fr))' }}>${cols}</div>`;
 }
 
 /* ---------------- escolher peça do catálogo ---------------- */
@@ -1137,7 +1165,7 @@ function EscolherPeca({ aoEscolher, aoFechar, disponivel, titulo }) {
     <div className="search" style=${{ background: 'var(--bg)' }}><${Ic} n="search" s=${20} /><input autoFocus placeholder="Nome, código ou rótulo do projeto" value=${q} onChange=${(e) => setQ(e.target.value)} aria-label="Buscar peça" /></div>
     <div>${itens.length ? itens.map(c => html`<button key=${c.id} className="row" style=${{ padding: '12px 4px' }} onClick=${() => aoEscolher(c.id)}>
       <div className="grow"><div className="t1">${c.desc}</div><div className="t2">${c.fornecedor} · ${c.codigo}${c.rotulo ? ' · ' + c.rotulo : ''}</div></div>
-      ${disponivel && html`<span className="t2">${nfmt(disponivel[c.id] || 0)} no CD</span>`}</button>`) : html`<${Vazio}>Nenhuma peça encontrada.</${Vazio}>`}</div>
+      ${disponivel && html`<span className="t2">${nfmt(disponivel[c.id] || 0)} na frente</span>`}</button>`) : html`<${Vazio}>Nenhuma peça encontrada.</${Vazio}>`}</div>
   </${Sheet}>`;
 }
 
@@ -1232,8 +1260,9 @@ function contarBadges(u) {
   if (pode(u, 'separar')) p += rems.filter(r => r.tipo === 'pedido' && r.status === 'solicitado').length;
   if (pode(u, 'retirar')) p += rems.filter(r => r.tipo === 'pedido' && r.status === 'separado').length;
   b.pedidos = p;
+  if (pode(u, 'notas')) b.canteiro = notasParaReceber().length;
+  if (pode(u, 'cd') || pode(u, 'frente')) b.conf = conferenciaMensalAtual().pendentes;
   let c = 0;
-  if (pode(u, 'cd')) c += rems.filter(r => r.destino === 'CD' && ['em_transito', 'aguardando_recebimento'].includes(r.status)).length;
   if (pode(u, 'frente')) { c += rems.filter(r => r.tipo !== 'pedido' && r.destino !== 'CD' && ['em_transito', 'aguardando_recebimento'].includes(r.status) && pode(u, 'frente', r.destino)).length; c += locaisComSaldo().filter(l => pode(u, 'frente', l) && (u.perfil !== 'escritorio' || false) && !contagemDoDia(l, H)).length; }
   b.cd = c;
   if (pode(u, 'pendencias')) b.gestao = store.todos('pendencias').filter(x => x.status === 'aberta').length;
@@ -1242,7 +1271,9 @@ function contarBadges(u) {
 }
 const TELAS_ABA = () => ({
   receb: { '': TelaRecebimento, empresa: TelaEmpresa, revisar: RevisarNota, conferir: TelaConferencia, nota: DetalheNota, corrigir: CorrigirConferencia },
-  cd: { '': TelaCD, local: TelaLocal, contagem: ContagemDia, receber: TelaReceberRemessa, projetos: TelaProjetos, projeto: VerProjeto, baias: TelaBaias },
+  canteiro: { '': TelaCanteiro, conferir: ConferirCanteiro, nota: RecebimentoNota },
+  cd: { '': TelaCD, local: TelaLocal, contagem: ContagemDia, receber: TelaReceberRemessa, projetos: TelaProjetos, projeto: VerProjeto, devolver: DevolverFornecedorTela },
+  conf: { '': TelaConfMensal, local: ConferirMensal, relatorio: RelatorioMensal },
   pedidos: { '': TelaPedidos, novo: NovoPedido, separar: SepararPedido, retirada: TelaRetirada, devolucao: TelaDevolucao, termo: TelaTermo, receber: TelaReceberRemessa },
   gestao: { '': TelaGestao, catalogo: TelaCatalogo, config: TelaConfig, pendencias: TelaPendencias }
 });
@@ -1458,10 +1489,12 @@ function TelaRecebimento({ ctx }) {
     let ops;
     if (ext === 'PDF') {
       const { folhas, total } = await folhasDoPDF(f, (m) => upd(id, { msg: m }), 12);
-      ops = folhas.map((fl, i) => ({ c: 'projetos', doc: { id: uid('pj'), nome: nomeBase + (folhas.length > 1 ? ' · folha ' + (i + 1) + '/' + total : ''), numero, local, localLido: lidoArq.lido, tipo: 'pdf', img: fl.url, w: fl.w, h: fl.h, pontos: [], criadoEm: agoraISO(), criadoPor: u.nome } }));
+      const lista = await listaDoProjetoPDF(f);
+      ops = folhas.map((fl, i) => ({ c: 'projetos', doc: { lista: i === 0 ? lista : [], id: uid('pj'), nome: nomeBase + (folhas.length > 1 ? ' · folha ' + (i + 1) + '/' + total : ''), numero, local, localLido: lidoArq.lido, tipo: 'pdf', img: fl.url, w: fl.w, h: fl.h, pontos: [], criadoEm: agoraISO(), criadoPor: u.nome } }));
     } else { const fl = await imagemLeve(f); ops = [{ c: 'projetos', doc: { id: uid('pj'), nome: nomeBase, numero, local, localLido: lidoArq.lido, tipo: 'imagem', img: fl.url, w: fl.w, h: fl.h, pontos: [], criadoEm: agoraISO(), criadoPor: u.nome } }]; }
     store.gravarVarios(ops); ops.forEach(o => lote.current.projs.push(o.doc.id));
-    upd(id, { st: 'ok', msg: 'PDF · ' + plural(ops.length, 'folha') + (local ? ' · ' + local : ''), projs: ops.map(o => o.doc.id), semLocal: !local });
+    const nLista = (ops[0].doc.lista || []).length;
+    upd(id, { st: 'ok', msg: 'PDF · ' + plural(ops.length, 'folha') + (nLista ? ' · lista com ' + plural(nLista, 'peça') : '') + (local ? ' · ' + local : ''), projs: ops.map(o => o.doc.id), semLocal: !local });
   };
   const subir = async (files) => {
     files = [...files]; if (!files.length) return; setOcupado(true); lote.current = { notas: [], projs: [] };
@@ -1537,7 +1570,7 @@ function TelaRecebimento({ ctx }) {
     </div>`;
   };
 
-  return html`<${Tela} ctx=${ctx} eyebrow="Controle de peças" titulo="Recebimento" direita=${podeNotas && html`<button className="hbtn" disabled=${ocupado} aria-label="Subir notas e projetos" onClick=${() => ref.current.click()}>${ocupado ? html`<span className="spin" style=${{ width: 16, height: 16, borderWidth: 2 }}></span>` : html`<${Ic} n="plus" s=${16} w=${2.6} />`}Subir</button>`}>
+  return html`<${Tela} ctx=${ctx} eyebrow="Quem busca na fábrica" titulo="Coleta" direita=${podeNotas && html`<button className="hbtn" disabled=${ocupado} aria-label="Subir notas e projetos" onClick=${() => ref.current.click()}>${ocupado ? html`<span className="spin" style=${{ width: 16, height: 16, borderWidth: 2 }}></span>` : html`<${Ic} n="plus" s=${16} w=${2.6} />`}Subir</button>`}>
     ${podeNotas && html`<input ref=${ref} type="file" multiple accept=".pdf,.dwg,.dxf,application/pdf,image/*" style=${{ display: 'none' }} onChange=${(e) => { subir(e.target.files); e.target.value = ''; }} />`}
     ${store.modo === 'demo' && html`<div className="note y">Modo demonstração: dados de exemplo, só neste aparelho.</div>`}
     <label className="search"><${Ic} n="search" s=${20} /><input placeholder="Número da NF ou empresa" inputmode="search" value=${q} onChange=${(e) => setQ(e.target.value)} aria-label="Buscar nota" />${q && html`<button className="iconbtn" aria-label="Limpar busca" onClick=${() => setQ('')}><${Ic} n="x" s=${18} /></button>`}</label>
@@ -1557,6 +1590,7 @@ function TelaRecebimento({ ctx }) {
     ${filtradas && html`<div className="sec">${{ falta: 'Notas com falta', sobra: 'Notas com sobra', ok: 'Notas sem diferença' }[filtro]}<button className="link" style=${{ padding: 0 }} onClick=${() => setF('todas')}>Fechar ✕</button></div>
       ${filtradas.length ? lista(filtradas) : html`<div className="card"><${Vazio}>Nenhuma nota aqui.</${Vazio}></div>`}`}
     <div className="dcols l"><div className="dcol">
+    ${abertas.map(n => html`<${AvisoProjetoNota} key=${'pj' + n.id} nota=${n} />`)}
     <div className="sec">Para conferir agora<span className="t2">${plural(abertas.length, 'nota')}</span></div>
     ${abertas.length ? abertas.map(cartaoAberta) : html`<div className="card"><${Vazio}>Nenhuma nota esperando conferência.${podeNotas ? ' Toque em "Subir" para mandar as notas que chegaram.' : ''}</${Vazio}></div>`}
     </div><div className="dcol">
@@ -1588,7 +1622,7 @@ function TelaEmpresa({ ctx }) {
   const abrir = (n) => ir('receb', n.status === 'rascunho' ? (podeNotas ? 'revisar' : 'nota') : n.status === 'concluida' ? 'nota' : (podeNotas ? 'conferir' : 'nota'), { id: n.id });
   return html`<${React.Fragment}>
     <header className="hdr sub"><button className="back" aria-label="Voltar" onClick=${() => ir('receb')}><${Ic} n="back" s=${24} /></button>
-      <${TileEmpresa} nome=${g} s=${44} /><div className="tt" style=${{ marginLeft: 8 }}><span className="eyebrow">Recebimento · empresa</span><h1>${g}</h1></div><${NetPill} /></header>
+      <${TileEmpresa} nome=${g} s=${44} /><div className="tt" style=${{ marginLeft: 8 }}><span className="eyebrow">Coleta · empresa</span><h1>${g}</h1></div><${NetPill} /></header>
     <main className="main">
       <div style=${{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 8 }}>
         <div className="kpi" style=${{ borderRadius: 16, padding: 12 }}><span className="v" style=${{ fontSize: 20 }}>${notas.length}</span><span className="l">notas</span></div>
@@ -1750,7 +1784,7 @@ function Assinatura({ rotulo, valor, set, h }) {
       ${!valor && html`<span className="t3" style=${{ position: 'absolute', left: 0, right: 0, bottom: 12, textAlign: 'center', pointerEvents: 'none' }}>assine aqui com o dedo</span>`}
     </div></div>`;
 }
-// Fecha a viagem atual (peças entram no CD). Com encerrar=true, fecha a nota: o que não veio vira falta.
+// Fecha a viagem atual (peças ficam "a caminho" até o Recebimento no canteiro). Com encerrar=true, fecha a nota: o que não veio vira falta.
 function FecharViagem({ ctx, nota, itens, encerrar, forcado, aoFechar, aoConcluir }) {
   const { usuario: u } = ctx;
   const [nome, setNome] = useState(u.nome);
@@ -1762,7 +1796,7 @@ function FecharViagem({ ctx, nota, itens, encerrar, forcado, aoFechar, aoConclui
   const sobras = itens.filter(i => i.tot > i.qtd);
   const confirmar = () => {
     const ops = []; const recebido = {};
-    agora.forEach(i => { recebido[i.key] = i.agora; ops.push(movimento('entrada', i.key, i.agora, 'NF', 'CD', nota.id, nome, { nf: nota.id, viagem: nv })); });
+    agora.forEach(i => { recebido[i.key] = i.agora; ops.push(movimento('entrada', i.key, i.agora, 'NF', 'CAM', nota.id, nome, { nf: nota.id, viagem: nv })); });
     const viagens = (nota.viagens || []).concat(qAgora || !(nota.viagens || []).length ? [{ n: nv, em: agoraISO(), por: nome, recebido }] : []);
     const doc = Object.assign({}, nota, { viagens, contagem: {}, status: 'em_conferencia', conferente: nome, drive: { ok: false }, drivePendente: true });
     if (assin === 'sim' && (sigConf || sigMot)) doc.assinaturas = (nota.assinaturas || []).concat([{ viagem: qAgora || !(nota.viagens || []).length ? nv : null, encerramento: !!encerrar, em: agoraISO(), confNome: nome, conf: sigConf, motNome: motNome.trim(), mot: sigMot }]);
@@ -1778,7 +1812,7 @@ function FecharViagem({ ctx, nota, itens, encerrar, forcado, aoFechar, aoConclui
   return html`<${Sheet} titulo=${forcado ? 'Encerrar a nota?' : encerrar ? 'Concluir conferência' : 'Fechar viagem ' + nv} aoFechar=${aoFechar} rodape=${html`<button className=${'btn block' + (forcado ? ' dark' : '')} disabled=${!assin || (assin === 'sim' && !sigConf && !sigMot)} onClick=${confirmar}>${forcado ? 'Encerrar nota com falta' : encerrar ? 'Concluir e guardar no CD' : 'Fechar viagem e guardar no CD'}</button>`}>
     ${forcado && html`<p style=${{ margin: 0, fontSize: 14, lineHeight: 1.5, color: 'var(--muted)' }}>Use quando a ${grupoEmpresa(nota.fornecedor)} avisar que não vem mais nada desta nota. O que não chegou vira <b style=${{ color: 'var(--navy)' }}>falta</b>, com o valor, para contestar.</p>`}
     <div className="grid2">
-      <div className="kpi" style=${{ background: 'var(--bg)' }}><span className="v">${nfmt(qAgora)}</span><span className="l">peças nesta viagem entram no CD agora</span></div>
+      <div className="kpi" style=${{ background: 'var(--bg)' }}><span className="v">${nfmt(qAgora)}</span><span className="l">peças nesta viagem seguem para o canteiro</span></div>
       <div className="kpi" style=${{ background: 'var(--bg)' }}><span className="v" style=${{ color: forcado && qVem ? 'var(--mag-t)' : 'inherit' }}>${nfmt(qVem)}</span><span className="l">${forcado ? 'peças em falta · ' + brl(vVem) : 'peças ainda por vir'}</span></div></div>
     ${aindaVem.length > 0 && html`<b style=${{ fontSize: 14 }}>${forcado ? 'Vai virar falta' : 'Ainda por vir'}</b>${lista(aindaVem, i => forcado ? 'falta ' + i.falta + ' · ' + brl(i.falta * (i.vu || 0)) : String(i.falta))}`}
     ${sobras.length > 0 && html`<b style=${{ fontSize: 14 }}>Sobrando (fora da nota)</b>${lista(sobras, i => '+' + (i.tot - i.qtd))}`}
@@ -1808,7 +1842,8 @@ function DetalheNota({ ctx }) {
       ${viagens.length > 0 && html`<div className="t3">${viagens.map(v => (v.correcao ? 'Correção rev. ' + v.correcao : 'Viagem ' + v.n) + ' · ' + fmtDataCurta(dataLocal(new Date(v.em))) + ' · ' + nfmt(Object.values(v.recebido || {}).reduce((a, b) => a + b, 0)) + ' pç · ' + (v.por || '')).join('   |   ')}</div>`}
       <${BarraLocal} r=${r} /><${Num4} r=${r} />
     </div>
-    ${nota.status === 'concluida' && pode(u, 'notas') && html`<button className="btn white sm" onClick=${() => ir('receb', 'corrigir', { id: nota.id })}><${Ic} n="M4 20h4L19 9l-4-4L4 16zM14 6l4 4" s=${18} />Corrigir conferência</button>`}
+    <${AvisoProjetoNota} nota=${nota} />
+    ${nota.status === 'concluida' && !(nota.receb && nota.receb.status === 'concluido') && pode(u, 'notas') && html`<button className="btn white sm" onClick=${() => ir('receb', 'corrigir', { id: nota.id })}><${Ic} n="M4 20h4L19 9l-4-4L4 16zM14 6l4 4" s=${18} />Corrigir conferência</button>`}
     ${(nota.revisoes || []).length > 0 && html`<div className="card">${[{ atual: true, rev: nota.revisao || 1, em: nota.corrigidaEm || nota.concluidaEm, motivo: nota.motivoRevisao }].concat(nota.revisoes.slice().reverse()).map(v => html`<button key=${v.rev} className="row" onClick=${() => v.atual ? setRel(true) : setRelAnt(notaDaRevisao(nota, v))}>
       <span className="grow"><div className="t1">Revisão ${v.rev} ${v.atual ? '· válida' : '· obsoleta'}</div><div className="t2">${v.em ? fmtDataHora(v.em) : ''}${v.atual && v.motivo ? ' · ' + v.motivo : ''}${!v.atual ? ' · substituída em ' + fmtDataHora(v.substituidaEm) : ''}</div></span>
       <span className=${'tag ' + (v.atual ? 'ok' : 'g')}>${v.atual ? 'atual' : 'obsoleta'}</span><span className="chev">›</span></button>`)}</div>`}
@@ -1835,6 +1870,7 @@ function CorrigirConferencia({ ctx }) {
   const [repNome, setRepNome] = useState(''); const [sigRep, setSigRep] = useState(null); const [feito, setFeito] = useState(null);
   if (feito) return html`<${Tela} ctx=${ctx} titulo="Conferência corrigida" voltar=${() => ir('receb', 'nota', { id: feito.id })}><${CompartilharRelatorio} nota=${feito} concluiu=${true} aoFechar=${() => ir('receb', 'nota', { id: feito.id })} /></${Tela}>`;
   if (!nota || nota.status !== 'concluida') return html`<${Tela} ctx=${ctx} titulo="Corrigir" voltar=${() => ir('receb')}><${Vazio}>Só dá para corrigir nota com conferência fechada.</${Vazio}></${Tela}>`;
+  if (nota.receb && nota.receb.status === 'concluido') return html`<${Tela} ctx=${ctx} titulo="Corrigir" voltar=${() => ir('receb', 'nota', { id: nota.id })}><${Vazio}>Esta nota já foi recebida no canteiro. O que vale agora é a conferência do Recebimento.</${Vazio}></${Tela}>`;
   const rev = nota.revisao || 1;
   const assAtual = (nota.assinaturas || []).filter(a => (a.revisao || 1) === rev);
   const precisaRep = assAtual.some(a => a.mot); const repAnt = (assAtual.find(a => a.mot) || {}).motNome || '';
@@ -1847,8 +1883,8 @@ function CorrigirConferencia({ ctx }) {
     if (precisaRep && !sigRep) return toast('Falta a assinatura do representante da ' + empresa + ' (ele assinou a conferência anterior).');
     const em = agoraISO(); const nova = rev + 1; const ops = []; const dif = {};
     mud.forEach(i => { const dq = (Number(qt[i.key]) || 0) - (antes[i.key] || 0); dif[i.key] = dq;
-      if (dq > 0) ops.push(movimento('entrada', i.key, dq, 'NF', 'CD', nota.id, confNome, { nf: nota.id, correcao: nova }));
-      else ops.push(movimento('correcao', i.key, -dq, 'CD', 'NF', nota.id, confNome, { nf: nota.id, correcao: nova })); });
+      if (dq > 0) ops.push(movimento('entrada', i.key, dq, 'NF', 'CAM', nota.id, confNome, { nf: nota.id, correcao: nova }));
+      else ops.push(movimento('correcao', i.key, -dq, 'CAM', 'NF', nota.id, confNome, { nf: nota.id, correcao: nova })); });
     // pendências abertas desta nota são substituídas pelas da nova revisão
     store.todos('pendencias').filter(p => p.ref === nota.id && p.status === 'aberta').forEach(p => ops.push({ c: 'pendencias', doc: Object.assign({}, p, { status: 'substituida', resolvidaEm: em, resolvidaPor: confNome, obs: (p.obs ? p.obs + ' · ' : '') + 'Substituída pela revisão ' + nova + ' da conferência' }) }));
     nota.itens.forEach(i => { const q = Number(qt[i.key]) || 0;
@@ -1885,10 +1921,12 @@ function CorrigirConferencia({ ctx }) {
 function ItemNF({ i, local, conferido, mostrarNota }) {
   const c = catalogoItem(i.key); const chips = [];
   if (i.aConferir) chips.push(['y', 'A conferir ' + nfmt(i.aConferir)]);
-  if (i.cd) chips.push(['g', 'CD ' + nfmt(i.cd) + (c.baia ? ' · baia ' + c.baia : '')]);
+  if (i.caminho) chips.push(['y', 'A caminho ' + nfmt(i.caminho)]);
+  if (i.cd) chips.push(['gr', 'Na frente ' + nfmt(i.cd)]);
   if (i.transito) chips.push(['gr', 'Na frente ' + nfmt(i.transito)]);
   Object.keys(i.frentes || {}).forEach(l => { const f = i.frentes[l]; const onde = l !== local ? ' · ' + l : '';
     if (f.ag + f.mo) chips.push(['gr', (l !== local ? 'Na frente ' + l : 'Na frente') + ' ' + nfmt(f.ag + f.mo)]); });
+  Object.keys(i.colabF || {}).forEach(l => { if (i.colabF[l] > 0) chips.push(['b', 'Com colaborador ' + nfmt(i.colabF[l]) + (l !== local ? ' · ' + l : '')]); });
   if (i.falta) chips.push(['m', 'Falta ' + nfmt(i.falta)]);
   if (i.perda) chips.push(['m', 'Perda ' + nfmt(i.perda)]);
   if (i.devolvido) chips.push(['g', 'Devolvidas ' + nfmt(i.devolvido)]);
@@ -1918,26 +1956,19 @@ function TelaCD({ ctx }) {
     <div style=${{ display: 'flex', alignItems: 'flex-start', gap: 10 }}><span className="grow"><div style=${{ fontSize: 17, fontWeight: 700 }}>${r.local}</div>
       <div className="t2" style=${{ marginTop: 2 }}>${plural(r.notas.length, 'nota')} · ${r.notas.map(x => 'NF ' + x.nota.numero).join(', ')} · ${nfmt(r.qtd)} peças</div></span><span className="chev">›</span></div>
     <${BarraLocal} r=${r} /><${Num4} r=${r} />
-    ${(r.aConferir > 0 || r.transito > 0) && html`<div className="t2">${[r.aConferir ? nfmt(r.aConferir) + ' a conferir' : '', r.transito ? nfmt(r.transito) + ' em trânsito' : ''].filter(Boolean).join(' · ')}</div>`}
+    ${r.aConferir > 0 && html`<div className="t2">${nfmt(r.aConferir) + ' ainda na coleta'}</div>`}
   </button>`;
-  return html`<${Tela} ctx=${ctx} eyebrow="Controle de peças" titulo="CD">
-    <label className="search"><${Ic} n="search" s=${20} /><input placeholder="Buscar local, nota ou peça" value=${q} onChange=${(e) => setQ(e.target.value)} aria-label="Buscar local, nota ou peça" />${q && html`<button className="iconbtn" aria-label="Limpar" onClick=${() => setQ('')}><${Ic} n="x" s=${18} /></button>`}</label>
+  return html`<${Tela} ctx=${ctx} eyebrow="Controle de peças" titulo="Frentes">
+    <label className="search"><${Ic} n="search" s=${20} /><input placeholder="Buscar frente, nota ou peça" value=${q} onChange=${(e) => setQ(e.target.value)} aria-label="Buscar local, nota ou peça" />${q && html`<button className="iconbtn" aria-label="Limpar" onClick=${() => setQ('')}><${Ic} n="x" s=${18} /></button>`}</label>
     ${achados ? html`
       ${achados.locais.map(cardLocal)}
       ${achados.notas.length > 0 && html`<div className="card">${achados.notas.map(n => html`<button key=${n.id} className="row" onClick=${() => ir('cd', 'local', { local: n.local, nota: n.id })}><span className="grow"><div className="t1">NF ${n.numero} · ${n.fornecedor}</div><div className="t2">${n.local}</div></span><span className="chev">›</span></button>`)}</div>`}
       ${achados.pecas.length > 0 && html`<div className="sec">Peças</div><div className="card">${achados.pecas.slice(0, 40).map(({ n, i }) => html`<div key=${n.id + i.key}><div className="t3" style=${{ padding: '10px 16px 0' }}>${n.local}</div><${ItemNF} i=${i} local=${n.local} mostrarNota=${'NF ' + n.numero} /></div>`)}</div>`}
       ${!achados.locais.length && !achados.notas.length && !achados.pecas.length && html`<${Vazio}>Nada encontrado para "${q}".</${Vazio}>`}` : html`
-      ${pode(u, 'cd') && chegando.length > 0 && html`<div className="card">${chegando.map(r => html`<button key=${r.id} className="row" onClick=${() => ir('cd', 'receber', { id: r.id, volta: { aba: 'cd' } })}>
-        <span className="dot" style=${{ background: 'var(--y)' }}></span><span className="grow"><div className="t1">Devolução chegando · ${r.origem}</div><div className="t2">${r.numero} · ${nfmt(r.itens.reduce((t, i) => t + (i.enviado || i.qtd), 0))} peças · conferir e receber</div></span><span className="chev">›</span></button>`)}</div>`}
       <div className="dgrid">${comNotas.map(cardLocal)}
       ${semNotas.map(r => html`<button key=${r.local} className="card" onClick=${() => ir('cd', 'local', { local: r.local })}><div className="row"><span className="grow"><div style=${{ fontSize: 17, fontWeight: 700 }}>${r.local}</div><div className="t2">Nenhuma nota ainda</div></span><span className="chev">›</span></div></button>`)}</div>
       ${semNota > 0 && html`<div className="note b">${nfmt(semNota)} peças sem nota (sobras registradas). Veja em Gestão › Pendências.</div>`}
-      <div className="grid2">
-        <button className="btn white sm" onClick=${() => ir('cd', 'baias')}><${Ic} n="box" s=${18} />Estoque por baia</button>
-        <button className="btn white sm" onClick=${() => ir('cd', 'projetos')}><${Ic} n="map" s=${18} />Projetos</button>
-      </div>
-      ${pode(u, 'cd') && html`<button className="btn white sm block" onClick=${() => setDevForn(true)}><${Ic} n="ret" s=${18} />Devolver ao fornecedor (fim de locação)</button>`}`}
-    ${devForn && html`<${DevolverFornecedor} ctx=${ctx} aoFechar=${() => setDevForn(false)} />`}
+      ${pode(u, 'cd') && html`<button className="btn white sm block" onClick=${() => ir('cd', 'devolver')}><${Ic} n="ret" s=${18} />Devolver ao fornecedor (fim de locação)</button>`}`}
   </${Tela}>`;
 }
 
@@ -1963,9 +1994,6 @@ function TelaLocal({ ctx }) {
       <button className="btn sm" style=${{ flex: 1, flexDirection: 'column', gap: 0, minHeight: 56 }} disabled=${!res.length} onClick=${() => ir('cd', 'contagem', { local })}><span>Contagem da frente</span><span style=${{ fontSize: 11, fontWeight: 600 }}>${!res.length ? 'nada na frente' : contHoje ? 'feita às ' + fmtHora(contHoje.criadoEm) : 'pendente hoje'}</span></button>
       <button className="btn white sm" style=${{ flex: 1, minHeight: 56 }} onClick=${() => ir('cd', 'projetos', { local })}>Ver no projeto</button>
     </div>
-    ${podeF && res.length > 0 && html`<div style=${{ display: 'flex', gap: 8 }}>
-      <button className="btn white sm" style=${{ flex: 1 }} onClick=${() => setModal({ t: 'transferencia' })}><${Ic} n="swap" s=${18} />Transferir</button>
-      <button className="btn white sm" style=${{ flex: 1 }} onClick=${() => setModal({ t: 'devolucao', hoje: saidasHoje })}><${Ic} n="ret" s=${18} />Devolver ao CD</button></div>`}
     ${r.notas.length > 0 && html`<div className="card pad" style=${{ gap: 10 }}><div className="t2">${plural(r.notas.length, 'nota')} · ${nfmt(r.qtd)} peças</div><${BarraLocal} r=${r} /><${Num4} r=${r} /></div>`}
     ${r.notas.map(rn => { const n = rn.nota; const ab = aberta === n.id;
       return html`<div key=${n.id} className="card">
@@ -1978,7 +2006,6 @@ function TelaLocal({ ctx }) {
       </div>`; })}
     ${!r.notas.length && html`<div className="card"><${Vazio}>Nenhuma nota com este local da aplicação ainda.</${Vazio}></div>`}
     ${deFora.length > 0 && html`<div className="sec">Nesta frente, vindas de outros locais</div><div className="card">${deFora.map((x, ix) => html`<div key=${ix} className="row"><span className="grow"><div className="t1">${descItem(x.key)}</div><div className="t2">${x.nf}</div></span><span className="tags">${x.ag ? html`<span className="tag sq b">Aguardando ${x.ag}</span>` : null}${x.mo ? html`<span className="tag sq gr">Montadas ${x.mo}</span>` : null}</span></div>`)}</div>`}
-    ${modal && html`<${EnviarDaFrente} ctx=${ctx} local=${local} tipo=${modal.t} hojeRems=${modal.hoje} aoFechar=${() => setModal(null)} />`}
   </${Tela}>`;
 }
 
@@ -2286,7 +2313,7 @@ function PedidoCard({ ctx, r }) {
   const { usuario: u, ir } = ctx; const [sl, sc] = infoPedido(r); const t = totaisTermo(r);
   const cancelar = () => { if (!confirm('Cancelar o pedido ' + r.numero + '?')) return; store.gravar('remessas', Object.assign({}, r, { status: 'cancelado', canceladoEm: agoraISO(), canceladoPor: u.nome, historico: (r.historico || []).concat([{ st: 'cancelado', em: agoraISO(), por: u.nome }]) })); toast('Pedido cancelado.'); };
   const acoes = [];
-  if (r.status === 'solicitado' && pode(u, 'separar')) acoes.push(html`<button key="s" className="btn sm" style=${{ flex: 1 }} onClick=${() => ir('pedidos', 'separar', { id: r.id })}>Separar no CD</button>`);
+  if (r.status === 'solicitado' && pode(u, 'separar')) acoes.push(html`<button key="s" className="btn sm" style=${{ flex: 1 }} onClick=${() => ir('pedidos', 'separar', { id: r.id })}>Separar na frente</button>`);
   if (r.status === 'separado' && pode(u, 'retirar')) acoes.push(html`<button key="r" className="btn sm" style=${{ flex: 1 }} onClick=${() => ir('pedidos', 'retirada', { id: r.id })}>Registrar retirada e termo</button>`);
   if (r.status === 'retirado' && pode(u, 'retirar')) acoes.push(html`<button key="d" className="btn sm" style=${{ flex: 1 }} onClick=${() => ir('pedidos', 'devolucao', { id: r.id })}><${Ic} n="ret" s=${18} />Registrar devolução</button>`);
   if (r.termo) acoes.push(html`<button key="t" className="btn white sm" style=${{ flex: r.status === 'quitado' || !pode(u, 'retirar') ? 1 : 'none', padding: '0 14px' }} onClick=${() => ir('pedidos', 'termo', { id: r.id })}>Termo</button>`);
@@ -2359,7 +2386,7 @@ function NovoPedido({ ctx }) {
   const [quem, setQuem] = useState(outro ? {} : { nome: u.nome, matricula: u.matricula || '' });
   const [destino, setDestino] = useState(u.local || ''); const [dataUso, setDataUso] = useState(addDias(hoje(), 1));
   const [itens, setItens] = useState({}); const [obs, setObs] = useState(''); const [pick, setPick] = useState(false); const [proj, setProj] = useState(false);
-  const cd = saldoLugar('CD');
+  const cd = saldoLugar('F:' + destino);
   const total = Object.values(itens).reduce((t, v) => t + (Number(v) || 0), 0);
   const noPrazo = dataUso > addDias(hoje(), 1) || (dataUso === addDias(hoje(), 1) && new Date().getHours() < HORA_LIMITE_PEDIDO);
   const enviar = () => {
@@ -2367,7 +2394,7 @@ function NovoPedido({ ctx }) {
     if (!(quem.nome || '').trim()) return toast('Diga quem pediu (crachá ou digitado).');
     if (!destino || !lista.length) return toast('Escolha a frente e pelo menos uma peça.');
     registrarLocal(destino);
-    store.gravar('remessas', { id: uid('rm'), numero: proximoNumero('PD'), tipo: 'pedido', origem: 'CD', destino, dataUso, itens: lista, status: 'solicitado',
+    store.gravar('remessas', { id: uid('rm'), numero: proximoNumero('PD'), tipo: 'pedido', origem: destino, destino, dataUso, itens: lista, status: 'solicitado',
       solicitante: quem.nome.trim(), solicitanteMat: (quem.matricula || '').trim(), solicitanteCargo: quem.cargo || '', registradoPor: u.nome, criadoPorEmail: outro ? '' : (u.email || ''),
       obs, criadoEm: agoraISO(), noPrazo, historico: [{ st: 'solicitado', em: agoraISO(), por: u.nome }] });
     toast('Pedido enviado ao CD.'); ir('pedidos');
@@ -2380,7 +2407,7 @@ function NovoPedido({ ctx }) {
       <div className="f"><span className="lb">Frente</span><${CampoLocal} valor=${destino} set=${setDestino} /></div>
       <label className="f"><span className="lb">Data de uso</span><input className="inp" type="date" value=${dataUso} min=${hoje()} onChange=${(e) => setDataUso(e.target.value)} /></label></div>
     <div style=${{ display: 'flex', gap: 8 }}><button className="btn white sm" style=${{ flex: 1 }} onClick=${() => setPick(true)}><${Ic} n="plus" s=${18} />Adicionar peça</button><button className="btn white sm" style=${{ flex: 1 }} disabled=${!destino} onClick=${() => setProj(true)}><${Ic} n="map" s=${18} />Pelo projeto</button></div>
-    <div className="card">${Object.keys(itens).length ? Object.keys(itens).map(k => html`<div key=${k} className="row"><div className="grow"><div className="t1">${descItem(k)}</div><div className="t2">No CD: ${cd[k] || 0} · baia ${catalogoItem(k).baia || '—'}</div>${(Number(itens[k]) || 0) > (cd[k] || 0) && html`<div className="t2" style=${{ color: 'var(--mag-t)', fontWeight: 600 }}>Mais do que tem no CD</div>`}</div><${Stepper} valor=${itens[k]} set=${(v) => setItens(Object.assign({}, itens, { [k]: v }))} /></div>`) : html`<${Vazio}>Adicione as peças que vai usar.</${Vazio}>`}</div>
+    <div className="card">${Object.keys(itens).length ? Object.keys(itens).map(k => html`<div key=${k} className="row"><div className="grow"><div className="t1">${descItem(k)}</div><div className="t2">Na frente: ${cd[k] || 0}</div>${(Number(itens[k]) || 0) > (cd[k] || 0) && html`<div className="t2" style=${{ color: 'var(--mag-t)', fontWeight: 600 }}>Mais do que tem na frente</div>`}</div><${Stepper} valor=${itens[k]} set=${(v) => setItens(Object.assign({}, itens, { [k]: v }))} /></div>`) : html`<${Vazio}>Adicione as peças que vai usar.</${Vazio}>`}</div>
     <label className="f"><span className="lb">Observação</span><input className="inp" value=${obs} onChange=${(e) => setObs(e.target.value)} placeholder="Ex.: montagem do trecho entre eixos 2 e 3" /></label>
     <${Rodape}><button className="btn block" disabled=${!total || !destino} onClick=${enviar}>Pedir para separar · ${total} peças</button></${Rodape}>
     ${pick && html`<${EscolherPeca} disponivel=${cd} aoFechar=${() => setPick(false)} aoEscolher=${(k) => { setItens(Object.assign({}, itens, { [k]: itens[k] || 1 })); setPick(false); }} />`}
@@ -2403,11 +2430,11 @@ function PedidoPeloProjeto({ local, aoFechar, aoAdicionar }) {
 /* ---------- separar ---------- */
 function SepararPedido({ ctx }) {
   const { usuario: u, ir } = ctx; useStore();
-  const rem = store.pegar('remessas', ctx.nav.p.id); const cd = saldoLugar('CD'); const snf = saldosNF();
+  const rem = store.pegar('remessas', ctx.nav.p.id); const cd = rem ? saldoLugar('F:' + rem.destino) : {}; const snf = saldosNF();
   const [sep, setSep] = useState(() => { const o = {}; (rem ? rem.itens : []).forEach(i => o[i.key] = Math.min(i.qtd, Math.max(0, cd[i.key] || 0))); return o; });
   const [ok, setOk] = useState({});
   if (!rem || rem.status !== 'solicitado') return html`<${Tela} ctx=${ctx} titulo="Separar" voltar=${() => ir('pedidos')}><${Vazio}>${rem ? 'Este pedido já foi separado.' : 'Pedido não encontrado.'}</${Vazio}></${Tela}>`;
-  const deQualNota = (k, q) => { const o = snf['CD|' + k] || {}; let resta = Number(q) || 0; const out = []; Object.keys(o).filter(nf => o[nf] > 0).sort(_ordNF(ordemNotas())).forEach(nf => { if (resta <= 0) return; const x = Math.min(resta, o[nf]); resta -= x; out.push(nomeNF(nf) + ': ' + x); }); return out.join(' · '); };
+  const deQualNota = (k, q) => { const o = snf['F:' + rem.destino + '|' + k] || {}; let resta = Number(q) || 0; const out = []; Object.keys(o).filter(nf => o[nf] > 0).sort(_ordNF(ordemNotas())).forEach(nf => { if (resta <= 0) return; const x = Math.min(resta, o[nf]); resta -= x; out.push(nomeNF(nf) + ': ' + x); }); return out.join(' · '); };
   const pronto = () => {
     const itens = rem.itens.map(i => Object.assign({}, i, { enviado: Number(sep[i.key]) || 0 }));
     if (!itens.some(i => i.enviado > 0)) return toast('Nada separado. Ajuste as quantidades.');
@@ -2418,9 +2445,9 @@ function SepararPedido({ ctx }) {
     <div className="card pad" style=${{ gap: 4 }}><div className="t1">Uso ${diaSemana(rem.dataUso)} ${fmtData(rem.dataUso)} · pedido por ${rem.solicitante}</div>${rem.obs && html`<div className="t2">Obs.: ${rem.obs}</div>`}</div>
     <div className="card">${rem.itens.map(i => { const c = catalogoItem(i.key); const disp = cd[i.key] || 0; return html`<div key=${i.key} className="row" style=${{ flexWrap: 'wrap' }}>
       <button aria-label="Marcar separado" onClick=${() => setOk(Object.assign({}, ok, { [i.key]: !ok[i.key] }))} style=${{ width: 32, height: 32, borderRadius: 10, border: 'none', background: ok[i.key] ? 'var(--green)' : 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}>${ok[i.key] && html`<${Ic} n="check" s=${18} w=${3} />`}</button>
-      <div className="grow"><div className="t1">${c.desc}</div><div className="t2">Baia ${c.baia || '—'} · pedido ${i.qtd} · no CD ${disp}</div><div className="t3">${deQualNota(i.key, sep[i.key])}</div></div>
+      <div className="grow"><div className="t1">${c.desc}</div><div className="t2">Pedido ${i.qtd} · na frente ${disp}</div><div className="t3">${deQualNota(i.key, sep[i.key])}</div></div>
       <${Stepper} valor=${sep[i.key]} max=${disp} set=${(v) => setSep(Object.assign({}, sep, { [i.key]: v }))} />
-      ${disp < i.qtd && html`<div className="note m" style=${{ width: '100%' }}>No CD só há ${disp}. Avise quem pediu.</div>`}</div>`; })}</div>
+      ${disp < i.qtd && html`<div className="note m" style=${{ width: '100%' }}>Na frente só há ${disp}. Avise quem pediu.</div>`}</div>`; })}</div>
     <div className="hint">O app tira das notas mais antigas primeiro, para devolver as notas por completo.</div>
     <${Rodape}><button className="btn block" onClick=${pronto}>Pedido pronto para retirada</button></${Rodape}>
   </${Tela}>`;
@@ -2429,7 +2456,7 @@ function SepararPedido({ ctx }) {
 /* ---------- retirada com termo ---------- */
 function TelaRetirada({ ctx }) {
   const { usuario: u, ir } = ctx; useStore();
-  const rem = store.pegar('remessas', ctx.nav.p.id); const cd = saldoLugar('CD');
+  const rem = store.pegar('remessas', ctx.nav.p.id); const cd = rem ? saldoLugar('F:' + rem.destino) : {};
   const [col, setCol] = useState({});
   const [respSetor, setRespSetor] = useState(rem ? rem.solicitante || '' : ''); const [obra, setObra] = useState(OBRA_TERMO);
   const [qt, setQt] = useState(() => { const o = {}; (rem ? rem.itens : []).forEach(i => o[i.key] = i.enviado != null ? i.enviado : i.qtd); return o; });
@@ -2447,9 +2474,9 @@ function TelaRetirada({ ctx }) {
     if (!assR) return toast('Falta a assinatura do responsável pelo termo.');
     const ops = []; const itensT = [];
     rem.itens.forEach(i => { const q = Math.min(Number(qt[i.key]) || 0, Math.max(0, cd[i.key] || 0)) || 0; if (q <= 0) return;
-      const mv = movFIFO('retirada', i.key, q, 'CD', 'F:' + rem.destino, rem.id, respNome); const nfs = {}; mv.forEach(o => { nfs[o.doc.nf] = (nfs[o.doc.nf] || 0) + o.doc.qtd; ops.push(o); });
+      const mv = movFIFO('retirada', i.key, q, 'F:' + rem.destino, 'COL:' + rem.destino, rem.id, respNome); const nfs = {}; mv.forEach(o => { nfs[o.doc.nf] = (nfs[o.doc.nf] || 0) + o.doc.qtd; ops.push(o); });
       itensT.push({ key: i.key, qtd: q, nfs, desc: descPeca(i.key), nfTxt: nfsTexto(nfs), porNF: porNF(nfs) }); });
-    if (!itensT.length) return toast('Essas peças não estão mais no CD.');
+    if (!itensT.length) return toast('Essas peças não estão mais na frente.');
     const em = agoraISO();
     const termo = { colaborador: { nome: col.nome.trim().toUpperCase(), matricula: (col.matricula || '').trim(), cargo: (col.cargo || '').trim().toUpperCase(), setor: (col.setor || '').trim() }, via: col.via || 'digitado',
       responsavelSetor: respSetor.trim(), obra: obra.trim() || OBRA_TERMO, em, rubrica: rub, assColab: assC, respNome: respNome.trim() || u.nome, respMat: u.matricula || '', assResp: assR, itens: itensT };
@@ -2466,7 +2493,7 @@ function TelaRetirada({ ctx }) {
         <label className="f"><span className="lb">Obra</span><input className="inp" value=${obra} onChange=${(e) => setObra(e.target.value)} /></label></div>
       <div className="hint" style=${{ padding: 0 }}>A coluna do patrimônio mostra o Nº da nota fiscal. Data da retirada: hoje, ${fmtData(hoje())}.</div></div>
     <div className="card pad"><b>2 · Peças retiradas</b>
-      <div>${rem.itens.map(i => html`<div key=${i.key} className="row" style=${{ padding: '10px 0' }}><div className="grow"><div className="t1">${descItem(i.key)}</div><div className="t2">Separado ${i.enviado != null ? i.enviado : i.qtd} · no CD ${cd[i.key] || 0}</div></div><${Stepper} valor=${qt[i.key]} max=${cd[i.key] || 0} set=${(v) => setQt(Object.assign({}, qt, { [i.key]: v }))} /></div>`)}</div></div>
+      <div>${rem.itens.map(i => html`<div key=${i.key} className="row" style=${{ padding: '10px 0' }}><div className="grow"><div className="t1">${descItem(i.key)}</div><div className="t2">Separado ${i.enviado != null ? i.enviado : i.qtd} · na frente ${cd[i.key] || 0}</div></div><${Stepper} valor=${qt[i.key]} max=${cd[i.key] || 0} set=${(v) => setQt(Object.assign({}, qt, { [i.key]: v }))} /></div>`)}</div></div>
     <div className="card pad"><b>3 · Rubrica e assinaturas</b>
       <${Assinatura} rotulo="Rubrica (visto) do colaborador" valor=${rub} set=${setRub} h=${110} />
       <${Assinatura} rotulo=${'Assinatura do colaborador' + (col.nome ? ' · ' + col.nome : '')} valor=${assC} set=${setAssC} />
@@ -2495,8 +2522,8 @@ function TelaDevolucao({ ctx }) {
     rem.termo.itens.forEach(i => { const q = Math.min(Number(qt[i.key]) || 0, comEle(i)); if (q <= 0) return; itens[i.key] = q;
       // volta para o CD respeitando as notas da retirada
       const jaNF = {}; let jaVoltou = dv[i.key] || 0; Object.keys(i.nfs || {}).forEach(nf => { const x = Math.min(jaVoltou, i.nfs[nf]); jaNF[nf] = x; jaVoltou -= x; });
-      let resta = q; Object.keys(i.nfs || {}).forEach(nf => { if (resta <= 0) return; const livre = i.nfs[nf] - (jaNF[nf] || 0); const x = Math.min(resta, livre); if (x > 0) { ops.push(movimento('devolucao', i.key, x, 'F:' + rem.destino, 'CD', rem.id, quem, { nf })); resta -= x; } });
-      if (resta > 0) movFIFO('devolucao', i.key, resta, 'F:' + rem.destino, 'CD', rem.id, quem).forEach(o => ops.push(o)); });
+      let resta = q; Object.keys(i.nfs || {}).forEach(nf => { if (resta <= 0) return; const livre = i.nfs[nf] - (jaNF[nf] || 0); const x = Math.min(resta, livre); if (x > 0) { ops.push(movimento('devolucao', i.key, x, 'COL:' + rem.destino, 'F:' + rem.destino, rem.id, quem, { nf })); resta -= x; } });
+      if (resta > 0) movFIFO('devolucao', i.key, resta, 'COL:' + rem.destino, 'F:' + rem.destino, rem.id, quem).forEach(o => ops.push(o)); });
     const devolucoes = (rem.devolucoes || []).concat([{ n, em, por: quem.trim() || u.nome, visto, itens }]);
     const quitado = rem.termo.itens.every(i => (dv[i.key] || 0) + (itens[i.key] || 0) >= i.qtd);
     const r = Object.assign({}, rem, { devolucoes, status: quitado ? 'quitado' : 'retirado', quitadoEm: quitado ? em : null, drive: Object.assign({}, rem.drive || {}, { ok: false }), drivePendente: true,
@@ -2541,7 +2568,7 @@ function TermosProntos({ r, retirada }) {
     catch (e) { toast('Não consegui gerar o PDF: ' + (e.message || e)); } finally { setOcup(''); }
   };
   return html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-    ${retirada && html`<div className="note ok" style=${{ margin: 0 }}>Retirada registrada. As peças saíram do CD para ${r.destino}.</div>`}
+    ${retirada && html`<div className="note ok" style=${{ margin: 0 }}>Retirada registrada. As peças ficam com o colaborador até a devolução.</div>`}
     ${prev ? html`<img src=${prev} alt="Prévia do termo" style=${{ width: '100%', borderRadius: 12, border: '1px solid var(--line)', background: '#fff' }} />` : html`<div className="card"><${Vazio}>Montando a prévia…</${Vazio}></div>`}
     <button className="btn block" disabled=${!!ocup} onClick=${() => fazer('colab')}><${Ic} n="download" s=${18} />${ocup === 'colab' ? 'Gerando…' : 'Via do colaborador · FOR-SUP-001'}</button>
     <button className="btn white block" disabled=${!!ocup} onClick=${() => fazer('resp')}><${Ic} n="download" s=${18} />${ocup === 'resp' ? 'Gerando…' : 'Via do responsável · FOR-SUP-002'}</button>
@@ -2625,7 +2652,8 @@ function pastasTermo(r) {
 
 let _ajustou = false;
 function ajustarDadosAntigos(u) { // termos sem descrição/pastas e pedidos do fluxo antigo parados "a caminho"
-  if (_ajustou || store.modo === 'demo' || !(pode(u, 'retirar') || pode(u, 'config'))) return; _ajustou = true;
+  if (_ajustou || !(pode(u, 'retirar') || pode(u, 'config'))) return; _ajustou = true;
+  if (store.modo === 'demo') { migrarSemCD(u); return; }
   const ops = [];
   store.todos('remessas').forEach(r => {
     if (r.tipo === 'pedido' && ['em_transito', 'aguardando_recebimento'].includes(r.status)) { try { receberRemessa(r, {}, { nome: 'Ajuste automático' }); } catch (e) {} return; }
@@ -2636,8 +2664,28 @@ function ajustarDadosAntigos(u) { // termos sem descrição/pastas e pedidos do 
     termo.pastas = pastasTermo({ termo, destino: r.destino }); termo.nfsTxt = [...new Set(termo.itens.flatMap(i => Object.keys(i.nfs || {})))].map(nomeNF).join(', ');
     ops.push({ c: 'remessas', doc: Object.assign({}, r, { termo, drive: { ok: false }, drivePendente: true }) });
   });
+  migrarSemCD(u);
   store.todos('notas').filter(n => ['em_conferencia', 'concluida'].includes(n.status) && !n.drive).forEach(n => ops.push({ c: 'notas', doc: Object.assign({}, n, { drive: { ok: false }, drivePendente: true }) }));
   if (ops.length) store.gravarVarios(ops);
+}
+
+/* Migração para o modelo sem CD (uma vez): o que estava no CD vai para a frente da nota, as notas
+   já conferidas contam como recebidas no canteiro e os termos abertos passam a "com colaborador". */
+function migrarSemCD(u) {
+  const cfg = config(); if (cfg.semCD) return;
+  const ops = []; const snf = saldosNF(); const quem = 'Ajuste (sem CD)';
+  Object.keys(snf).forEach(k => { if (!k.startsWith('CD|')) return; const key = k.slice(3);
+    Object.keys(snf[k]).forEach(nf => { const q = snf[k][nf]; if (q <= 0) return; const n = store.pegar('notas', nf);
+      ops.push(movimento('ajuste', key, q, 'CD', 'F:' + ((n && n.local) || 'Sem local'), nf || null, quem, { nf })); }); });
+  store.todos('remessas').filter(r => r.termo && r.status === 'retirado').forEach(r => {
+    const dv = devolvidoTermo(r);
+    r.termo.itens.forEach(i => { let ja = dv[i.key] || 0;
+      Object.keys(i.nfs || {}).forEach(nf => { const x = Math.min(ja, i.nfs[nf]); ja -= x; const resta = i.nfs[nf] - x;
+        if (resta > 0) ops.push(movimento('ajuste', i.key, resta, 'F:' + r.destino, 'COL:' + r.destino, r.id, quem, { nf })); }); });
+  });
+  store.todos('notas').filter(n => n.status === 'concluida' && !n.receb).forEach(n => ops.push({ c: 'notas', doc: Object.assign({}, n, { receb: { status: 'concluido', legado: true, em: n.concluidaEm || agoraISO(), por: 'Antes do Recebimento no canteiro' } }) }));
+  ops.push({ c: 'config', doc: Object.assign({}, cfg, { semCD: agoraISO() }) });
+  store.gravarVarios(ops);
 }
 /* ================= ABA 4 · GESTÃO ================= */
 function TelaGestao({ ctx }) {
@@ -2645,7 +2693,7 @@ function TelaGestao({ ctx }) {
   const [gerando, setGerando] = useState(false); const [todasParadas, setTodasParadas] = useState(false);
   const locais = locaisTodos();
   const vis = locais.map(visaoLocal);
-  const tot = ['cd', 'ag', 'mo', 'falta', 'transito', 'qtd'].reduce((o, k) => { o[k] = vis.reduce((t, x) => t + x[k], 0); return o; }, {});
+  const tot = ['cd', 'ag', 'mo', 'falta', 'transito', 'qtd', 'caminho', 'colab', 'naFrente'].reduce((o, k) => { o[k] = vis.reduce((t, x) => t + (x[k] || 0), 0); return o; }, {});
   const todas = []; locais.forEach(l => resumoFrente(l).forEach(r => todas.push(Object.assign({ local: l }, r))));
   const paradas = todas.filter(r => r.aguardando > 0).sort((a, b) => b.diasParado - a.diasParado);
   const p7 = paradas.filter(r => r.diasParado > DIAS_PARADA_ALERTA);
@@ -2669,7 +2717,7 @@ function TelaGestao({ ctx }) {
     <div className="card pad" style=${{ gap: 10 }}><${BarraLocal} r=${tot} /><${Num4} r=${tot} />
       ${tot.transito > 0 && html`<div className="t2">${nfmt(tot.transito)} em trânsito</div>`}</div>
     <div className="card">${vis.filter(x => x.notas.length).map(x => html`<button key=${x.local} className="row" onClick=${() => ir('cd', 'local', { local: x.local })}>
-      <span className="grow"><div className="t1">${x.local}</div><div className="t2">${nfmt(x.cd)} no CD · ${nfmt(x.ag + x.mo + (x.transito || 0))} na frente${x.falta ? ' · ' + nfmt(x.falta) + ' em falta' : ''}</div></span><span className="chev">›</span></button>`)}
+      <span className="grow"><div className="t1">${x.local}</div><div className="t2">${nfmt(x.naFrente)} na frente · ${nfmt(x.colab)} com colaborador${x.falta ? ' · ' + nfmt(x.falta) + ' em falta' : ''}</div></span><span className="chev">›</span></button>`)}
       ${!vis.some(x => x.notas.length) && html`<${Vazio}>Nenhuma nota conferida ainda.</${Vazio}>`}</div>
     </div><div className="dcol">
     <div className="sec">Há mais tempo nas frentes <span className="t2">dias desde a chegada</span></div>
@@ -2693,34 +2741,37 @@ function TelaPendencias({ ctx }) {
   const lista = store.todos('pendencias').filter(p => p.status === f).sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''));
   const podeR = pode(u, 'pendencias');
   return html`<${Tela} ctx=${ctx} eyebrow="Gestão" titulo="Pendências" voltar=${() => ir('gestao')}>
-    <div className="chips">${[['aberta', 'Abertas'], ['resolvida', 'Resolvidas']].map(([k, l]) => html`<button key=${k} className=${'chip' + (f === k ? ' on' : '')} onClick=${() => setF(k)}>${l}</button>`)}</div>
+    <div className="chips">${[['aberta', 'Abertas'], ['resolvida', 'Resolvidas'], ['substituida', 'Substituídas']].map(([k, l]) => html`<button key=${k} className=${'chip' + (f === k ? ' on' : '')} onClick=${() => setF(k)}>${l}</button>`)}</div>
     <div className="card">${lista.length ? lista.map(p => html`<div key=${p.id} className="row" style=${{ alignItems: 'flex-start' }}>
-      <span className=${'tag ' + (p.tipo === 'falta' ? 'm' : 'b')}>${p.tipo === 'falta' ? 'Falta' : 'Sobra'} ${p.qtd}</span>
-      <div className="grow"><div className="t1">${descItem(p.key)}</div><div className="t2">${p.origem} · ${p.local} · ${fmtDataHora(p.criadoEm)}${p.tipo === 'falta' ? ' · ' + brl(p.qtd * (catalogoItem(p.key).vu || 0)) : ''}</div>${p.obs && html`<div className="t2">${p.obs}</div>`}${p.resolucao && html`<div className="t2"><b>Resolução:</b> ${p.resolucao}</div>`}</div>
+      <span className=${'tag ' + (p.tipo === 'sobra' ? 'b' : p.tipo === 'avaria' ? 'o' : 'm')}>${TIPO_PEND[p.tipo] || p.tipo} ${p.qtd}</span>
+      <div className="grow"><div className="t1">${descItem(p.key)}</div><div className="t2">${p.origem} · ${p.local} · ${fmtDataHora(p.criadoEm)}${p.tipo !== 'sobra' ? ' · ' + brl(p.qtd * (catalogoItem(p.key).vu || 0)) : ''}</div>${p.obs && html`<div className="t2">${p.obs}</div>`}${(p.fotos || []).length > 0 && html`<${FotosMini} ids=${p.fotos} />`}${p.resolucao && html`<div className="t2"><b>Resolução:</b> ${p.resolucao}</div>`}</div>
       ${podeR && p.status === 'aberta' && html`<button className="btn soft xs" onClick=${() => setRes(p)}>Resolver</button>`}</div>`) : html`<${Vazio}>Nenhuma pendência ${f === 'aberta' ? 'aberta' : 'resolvida'}.</${Vazio}>`}</div>
     ${res && html`<${ResolverPendencia} p=${res} u=${u} aoFechar=${() => setRes(null)} />`}
   </${Tela}>`;
 }
+const TIPO_PEND = { falta: 'Falta', sobra: 'Sobra', avaria: 'Avaria', perda: 'Perdida' };
 function ResolverPendencia({ p, u, aoFechar }) {
-  const [txt, setTxt] = useState(''); const [acao, setAcao] = useState(p.tipo === 'falta' ? 'encontrada' : 'ok');
+  const faltaLike = p.tipo === 'falta' || p.tipo === 'perda';
+  const [txt, setTxt] = useState(''); const [acao, setAcao] = useState(faltaLike ? 'encontrada' : p.tipo === 'avaria' ? 'cobrada' : 'ok');
   const salvar = () => {
-    const ops = [{ c: 'pendencias', doc: Object.assign({}, p, { status: 'resolvida', resolucao: ({ encontrada: 'Peças encontradas', perda: 'Perda confirmada', contestada: 'Contestado com o fornecedor', ok: 'Sobra conferida' })[acao] + (txt ? ' — ' + txt : ''), resolvidaEm: agoraISO(), resolvidaPor: u.nome }) }];
+    const ops = [{ c: 'pendencias', doc: Object.assign({}, p, { status: 'resolvida', resolucao: ({ encontrada: 'Peças encontradas', perda: 'Perda confirmada', contestada: 'Contestado com o fornecedor', ok: 'Sobra conferida', cobrada: 'Avaria acertada com a empresa', consertada: 'Peça consertada / sem custo' })[acao] + (txt ? ' — ' + txt : ''), resolvidaEm: agoraISO(), resolvidaPor: u.nome }) }];
     const pend = saldoLugar('PEND:' + p.id)[p.key] || 0;
     const nota = p.ref && store.pegar('notas', p.ref);
     if (pend > 0) {
-      const destino = p.local && p.local !== 'Recebimento' ? (p.local === 'CD' ? 'CD' : 'F:' + p.local) : 'CD';
+      const nt = p.ref && store.pegar('notas', p.ref); const destino = 'F:' + (p.local && !['Recebimento', 'CD', 'Coleta'].includes(p.local) ? p.local : (nt && nt.local) || 'Sem local');
       if (acao === 'encontrada') movFIFO('ajuste', p.key, pend, 'PEND:' + p.id, destino, p.id, u.nome).forEach(o => ops.push(o));
       if (acao === 'perda') movFIFO('perda', p.key, pend, 'PEND:' + p.id, 'PERDA', p.id, u.nome).forEach(o => ops.push(o));
     } else if (p.tipo === 'falta' && nota) {
       // falta da conferência da nota: as peças nunca entraram
-      if (acao === 'encontrada') ops.push(movimento('entrada', p.key, p.qtd, 'NF', 'CD', nota.id, u.nome, { nf: nota.id }));
+      if (acao === 'encontrada') ops.push(movimento('entrada', p.key, p.qtd, 'NF', 'F:' + (nota.local || 'Sem local'), nota.id, u.nome, { nf: nota.id }));
       if (acao === 'perda') ops.push(movimento('perda', p.key, p.qtd, 'NF', 'PERDA', nota.id, u.nome, { nf: nota.id }));
     }
     store.gravarVarios(ops); toast('Pendência resolvida.'); aoFechar();
   };
   return html`<${Sheet} titulo="Resolver pendência" aoFechar=${aoFechar} rodape=${html`<button className="btn block" onClick=${salvar}>Salvar</button>`}>
-    <div><div className="t1">${p.tipo === 'falta' ? 'Falta' : 'Sobra'} de ${p.qtd} × ${descItem(p.key)}</div><div className="t2">${p.origem} · ${p.obs || ''}</div></div>
-    <div className="chips">${(p.tipo === 'falta' ? [['encontrada', 'Peças encontradas'], ['perda', 'Perda confirmada'], ['contestada', 'Contestado c/ fornecedor']] : [['ok', 'Sobra conferida']]).map(([k, l]) => html`<button key=${k} className=${'chip' + (acao === k ? ' on' : '')} onClick=${() => setAcao(k)}>${l}</button>`)}</div>
+    <div><div className="t1">${TIPO_PEND[p.tipo] || p.tipo} · ${p.qtd} × ${descItem(p.key)}</div><div className="t2">${p.origem} · ${p.obs || ''}</div></div>
+    ${(p.fotos || []).length > 0 && html`<${FotosMini} ids=${p.fotos} />`}
+    <div className="chips">${(faltaLike ? [['encontrada', 'Peças encontradas'], ['perda', 'Perda confirmada'], ['contestada', 'Contestado c/ fornecedor']] : p.tipo === 'avaria' ? [['cobrada', 'Acertada com a empresa'], ['consertada', 'Consertada / sem custo']] : [['ok', 'Sobra conferida']]).map(([k, l]) => html`<button key=${k} className=${'chip' + (acao === k ? ' on' : '')} onClick=${() => setAcao(k)}>${l}</button>`)}</div>
     <label className="f"><span className="lb">Observação</span><textarea className="inp" value=${txt} onChange=${(e) => setTxt(e.target.value)}></textarea></label>
   </${Sheet}>`;
 }
@@ -2919,7 +2970,7 @@ function dadosRelatorio(n) {
 const COR_SIT = { falta: '#9C3D6E', sobra: '#4A6491', ok: '#3E7A5E', parcial: '#B8962E' };
 const TXT_SIT = { falta: '#7A1556', sobra: '#243B8F', ok: '#10543A', parcial: '#5C4300' };
 function textoRelatorio(d) {
-  return 'CONFERÊNCIA DE RECEBIMENTO · ' + (d.n.local || '').toUpperCase() + '\nNF ' + d.n.numero + ' · ' + d.empresa + ' · ' + d.periodo +
+  return 'CONFERÊNCIA NA COLETA · ' + (d.n.local || '').toUpperCase() + '\nNF ' + d.n.numero + ' · ' + d.empresa + ' · ' + d.periodo +
     '\nSituação: ' + d.situacao[2] + '\nPeças: ' + d.totR + ' recebidas de ' + d.totQ +
     (d.faltas.length ? '\nFaltando: ' + d.faltas.map(i => i.desc + ' · ' + (-i.dif) + ' pç').join('; ') + ' · ' + brl(d.faltaV) : '') +
     (d.sobras.length ? '\nSobrando: ' + d.sobras.map(i => i.desc + ' · ' + i.dif + ' pç').join('; ') : '') +
@@ -2942,7 +2993,7 @@ function htmlImagem(d) {
   const marca = d.obsoleta ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none"><div style="transform:rotate(-30deg);font-size:84px;font-weight:700;color:rgba(122,21,86,.16);letter-spacing:.1em">OBSOLETO</div></div>` : '';
   return `<div style="width:540px;background:#F2F4EE;font-family:'IBM Plex Sans',sans-serif;color:#13152B;position:relative">${marca}
   <div style="background:#212B2A;padding:22px 26px;display:flex;align-items:center;gap:14px">
-    <div style="flex:1"><div style="font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;letter-spacing:.16em;color:#AEC155">CONFERÊNCIA DE RECEBIMENTO</div>
+    <div style="flex:1"><div style="font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;letter-spacing:.16em;color:#AEC155">CONFERÊNCIA NA COLETA</div>
     <div style="font-size:24px;font-weight:700;color:#fff;margin-top:2px">NF ${esc(d.n.numero)} · ${esc(d.empresa)}</div>
     <div style="font-size:12px;color:#C9CEC2;margin-top:2px">${esc(d.n.local || '')} · ${esc(d.periodo)}</div></div>${logoEmpresaHtml(d, 58)}</div>${faixa}
   <div style="padding:18px 22px;display:flex;flex-direction:column;gap:12px">
@@ -2961,7 +3012,7 @@ function htmlImagem(d) {
 function fabricaPaginaPDF(d) {
   const k = d.situacao[1];
   const TH = (al) => `padding:7px 8px;font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#4E5752;font-weight:600;text-align:${al};border-bottom:1.5px solid #13152B`;
-  const cab = (p) => `<div style="display:flex;align-items:center;gap:16px;padding-bottom:12px;border-bottom:3px solid #AEC155"><img src="${window.__LOGO__}" style="height:${p ? 34 : 46}px"><div style="flex:1;text-align:right"><div style="font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:600;letter-spacing:.16em;color:#5E7020">LINHA 4 · EXTENSÃO GÁVEA · CONTROLE DE PEÇAS</div><div style="font-size:${p ? 15 : 20}px;font-weight:700">${p ? 'NF ' + esc(d.n.numero) + ' · ' + esc(d.empresa) + ' · continuação' : 'Relatório de conferência de recebimento'}</div></div></div>`;
+  const cab = (p) => `<div style="display:flex;align-items:center;gap:16px;padding-bottom:12px;border-bottom:3px solid #AEC155"><img src="${window.__LOGO__}" style="height:${p ? 34 : 46}px"><div style="flex:1;text-align:right"><div style="font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:600;letter-spacing:.16em;color:#5E7020">LINHA 4 · EXTENSÃO GÁVEA · CONTROLE DE PEÇAS</div><div style="font-size:${p ? 15 : 20}px;font-weight:700">${p ? 'NF ' + esc(d.n.numero) + ' · ' + esc(d.empresa) + ' · continuação' : 'Relatório da coleta (conferência na fábrica)'}</div></div></div>`;
   const kpi = (v, l, c, ult) => `<div style="flex:1;padding:12px 14px;${ult ? '' : 'border-right:1px solid #D7DBD0'}"><div style="font-size:21px;font-weight:700;line-height:1.1;${c ? 'color:' + c : ''}">${v}</div><div style="font-size:10px;color:#4E5752;margin-top:2px">${l}</div></div>`;
   const info = (l, v, ult) => `<div style="padding:10px 12px;${ult ? '' : 'border-right:1px solid #EBEEE6'}"><div style="font-size:9px;color:#4E5752;text-transform:uppercase;letter-spacing:.08em;font-family:'IBM Plex Mono',monospace">${l}</div><div style="font-size:12px;font-weight:600;margin-top:3px">${v}</div></div>`;
   const linha = (it, ix) => { const f = it.dif < 0, s = it.dif > 0; const bg = f ? '#FBF3F7' : s ? '#F3F5FA' : ix % 2 ? '#FAFBF8' : '#FFFFFF';
@@ -3052,7 +3103,7 @@ function CompartilharRelatorio({ nota, concluiu, aoFechar }) {
   const d = dadosRelatorio(nota);
   const [ocup, setOcup] = useState(''); const [prev, setPrev] = useState(null);
   useEffect(() => { let vivo = true; gerarImagemRelatorio(d).then(b => { if (vivo && b) setPrev(URL.createObjectURL(b)); }).catch(() => {}); return () => { vivo = false; }; }, []);
-  const base = 'Conferencia_NF' + (nota.numero || '') + '_' + d.empresa.replace(/\W+/g, '') + (d.rev > 1 || d.obsoleta ? '_rev' + d.rev : '') + (d.obsoleta ? '_OBSOLETA' : '');
+  const base = 'Coleta_NF' + (nota.numero || '') + '_' + d.empresa.replace(/\W+/g, '') + (d.rev > 1 || d.obsoleta ? '_rev' + d.rev : '') + (d.obsoleta ? '_OBSOLETA' : '');
   const fazer = async (tipo) => {
     setOcup(tipo === 'img' ? 'Gerando imagem…' : 'Gerando PDF…');
     try {
@@ -3065,7 +3116,7 @@ function CompartilharRelatorio({ nota, concluiu, aoFechar }) {
   const copiar = () => { const t = textoRelatorio(d); (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('Texto copiado.')).catch(() => toast('Não foi possível copiar.')); };
   const k = d.situacao[1];
   const titulo = d.obsoleta ? 'Revisão ' + d.rev + ' (obsoleta)' : concluiu ? (d.rev > 1 ? 'Revisão ' + d.rev + ' salva' : d.concluida ? 'Conferência concluída' : 'Viagem ' + d.viagens.length + ' fechada') : 'Relatório da conferência';
-  const sub = d.concluida ? nfmt(d.totR) + ' peças no CD' + (d.faltaQ ? ' · ' + d.faltaQ + ' em falta (' + brlC(d.faltaV) + ')' : '') + (d.sobraQ ? ' · ' + d.sobraQ + ' a mais' : '')
+  const sub = d.concluida ? nfmt(d.totR) + ' peças conferidas na coleta' + (d.faltaQ ? ' · ' + d.faltaQ + ' em falta (' + brlC(d.faltaV) + ')' : '') + (d.sobraQ ? ' · ' + d.sobraQ + ' a mais' : '')
     : nfmt(d.totR) + ' de ' + nfmt(d.totQ) + ' peças recebidas · nota continua aberta';
   const btn = (tipo, ic, l, escuro) => html`<button disabled=${!!ocup} onClick=${tipo === 'txt' ? copiar : () => fazer(tipo)} style=${{ height: 84, borderRadius: 16, border: 'none', background: escuro ? 'var(--navy)' : 'var(--bg)', color: escuro ? '#fff' : 'var(--navy)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 13, fontWeight: 700, opacity: ocup ? 0.5 : 1 }}><${Ic} n=${ic} s=${24} c=${escuro ? '#AEC155' : '#13152B'} />${l}</button>`;
   return html`<${Sheet} titulo=${titulo} aoFechar=${aoFechar} rodape=${html`<button className="btn block" onClick=${aoFechar}>${concluiu ? 'Concluir' : 'Fechar'}</button>`}>
@@ -3078,6 +3129,404 @@ function CompartilharRelatorio({ nota, concluiu, aoFechar }) {
     ${ocup ? html`<div style=${{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'center' }} className="t2"><span className="spin" style=${{ width: 18, height: 18, borderWidth: 2 }}></span>${ocup}</div>`
       : html`<span className="t3" style=${{ textAlign: 'center', lineHeight: 1.45 }}>Abre o WhatsApp, e-mail ou outro app do celular. O relatório pode ser gerado de novo a qualquer momento pela nota.</span>`}
   </${Sheet}>`;
+}
+/* ================= FOTOS (avarias, peças danificadas) ================= */
+function useFoto(id) {
+  const [src, setSrc] = useState(null);
+  useEffect(() => { let vivo = true; if (id) store.lerFoto(id).then(s => { if (vivo) setSrc(s); }).catch(() => {}); return () => { vivo = false; }; }, [id]);
+  return src;
+}
+function Miniatura({ id, s, aoRemover, aoAbrir }) {
+  const src = useFoto(id); s = s || 56;
+  return html`<span style=${{ position: 'relative', width: s, height: s, flex: 'none' }}>
+    <button type="button" onClick=${() => src && aoAbrir && aoAbrir(src)} style=${{ width: s, height: s, borderRadius: 10, border: 'none', padding: 0, background: src ? 'center/cover no-repeat url(' + src + ')' : 'var(--soft)', display: 'block' }} aria-label="Ver foto"></button>
+    ${aoRemover && html`<button type="button" aria-label="Remover foto" onClick=${aoRemover} style=${{ position: 'absolute', top: -6, right: -6, width: 22, height: 22, borderRadius: 999, border: 'none', background: 'var(--navy)', color: '#fff', fontSize: 13, lineHeight: '22px', padding: 0 }}>×</button>`}</span>`;
+}
+function VerFoto({ src, aoFechar }) {
+  return html`<div onClick=${aoFechar} style=${{ position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(0,0,0,.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}><img src=${src} alt="Foto" style=${{ maxWidth: '100%', maxHeight: '100%', borderRadius: 8 }} /></div>`;
+}
+function FotosMini({ ids }) {
+  const [ver, setVer] = useState(null);
+  return html`<div style=${{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>${ids.map(id => html`<${Miniatura} key=${id} id=${id} s=${44} aoAbrir=${setVer} />`)}${ver && html`<${VerFoto} src=${ver} aoFechar=${() => setVer(null)} />`}</div>`;
+}
+function CampoFotos({ ids, set, cor }) {
+  const ref = useRef(); const [ocup, setOcup] = useState(false); const [ver, setVer] = useState(null);
+  const add = async (files) => {
+    setOcup(true);
+    try { const novos = []; for (const f of [...files]) { const r = await comprimirImagem(f, 1000, 0.62); novos.push(await store.salvarFoto(r.url)); } set((ids || []).concat(novos)); }
+    catch (e) { toast('Não consegui guardar a foto.'); } finally { setOcup(false); }
+  };
+  return html`<div style=${{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+    ${(ids || []).map(id => html`<${Miniatura} key=${id} id=${id} aoAbrir=${setVer} aoRemover=${() => set(ids.filter(x => x !== id))} />`)}
+    <input ref=${ref} type="file" accept="image/*" capture="environment" multiple style=${{ display: 'none' }} onChange=${(e) => { add(e.target.files); e.target.value = ''; }} />
+    <button type="button" onClick=${() => ref.current.click()} disabled=${ocup} style=${{ width: 56, height: 56, borderRadius: 10, border: '1.5px dashed ' + (cor || '#9C3D6E'), background: '#fff', color: cor || '#7A1556', fontSize: 11, fontWeight: 600, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1 }}>${ocup ? html`<span className="spin" style=${{ width: 16, height: 16, borderWidth: 2 }}></span>` : html`<span style=${{ fontSize: 20 }}>＋</span>foto`}</button>
+    ${ver && html`<${VerFoto} src=${ver} aoFechar=${() => setVer(null)} />`}</div>`;
+}
+// bloco "Avaria": marcar, quantas, fotos e observação
+function BlocoAvaria({ titulo, v, set, max }) {
+  const on = (v.q || 0) > 0 || v.on;
+  if (!on) return html`<button type="button" onClick=${() => set(Object.assign({}, v, { on: true, q: Math.min(1, max || 1) }))} style=${{ alignSelf: 'flex-start', height: 34, padding: '0 12px', borderRadius: 999, border: 'none', background: 'var(--bg)', color: '#7A1556', fontSize: 12.5, fontWeight: 600 }}>${titulo}</button>`;
+  return html`<div style=${{ background: '#FBF0F6', borderRadius: 12, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style=${{ display: 'flex', alignItems: 'center', gap: 8 }}><b style=${{ fontSize: 13, color: '#7A1556', flex: 1 }}>${titulo}</b><span className="t3">quantas</span><${Stepper} valor=${v.q || 0} max=${max} set=${(q) => set(Object.assign({}, v, { q, on: true }))} />
+      <button type="button" className="link" style=${{ padding: '0 0 0 4px', color: 'var(--muted)', fontSize: 12 }} onClick=${() => set({})}>Tirar</button></div>
+    <${CampoFotos} ids=${v.fotos || []} set=${(fotos) => set(Object.assign({}, v, { fotos }))} />
+    <input className="inp" style=${{ height: 40, fontSize: 13 }} value=${v.obs || ''} onChange=${(e) => set(Object.assign({}, v, { obs: e.target.value }))} placeholder="O que aconteceu (ex.: amassado na ponta)" /></div>`;
+}
+
+/* ================= ABA RECEBIMENTO (conferência no canteiro) ================= */
+function notasParaReceber() { return store.todos('notas').filter(n => n.status === 'concluida' && !(n.receb && n.receb.status === 'concluido')).sort((a, b) => (a.concluidaEm || '').localeCompare(b.concluidaEm || '')); }
+function resumoReceb(n) {
+  const r = (n.receb && n.receb.itens) || {}; let col = 0, q = 0, av = 0, avV = 0, fa = 0;
+  (n.itens || []).forEach(i => { const x = r[i.key] || {}; col += x.col || 0; q += x.q || 0; av += x.avq || 0; avV += (x.avq || 0) * (i.vu || 0); fa += Math.max(0, (x.col || 0) - (x.q || 0)); });
+  return { col, q, av, avV, fa };
+}
+function TelaCanteiro({ ctx }) {
+  const { usuario: u, ir } = ctx; useStore();
+  const chegando = notasParaReceber();
+  const H = hoje(); const mes = H.slice(0, 7);
+  const recebidas = store.todos('notas').filter(n => n.receb && n.receb.status === 'concluido' && !n.receb.legado).sort((a, b) => (b.receb.em || '').localeCompare(a.receb.em || ''));
+  const comAv = recebidas.filter(n => resumoReceb(n).av > 0);
+  const tile = (l, n, s, c) => html`<div className="card" style=${{ padding: 12, borderRadius: 16, display: 'flex', flexDirection: 'column', gap: 2 }}><span style=${{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: 'var(--muted)' }}><span className="dot" style=${{ width: 8, height: 8, background: c }}></span>${l}</span><span style=${{ fontSize: 26, fontWeight: 700, lineHeight: 1.15 }}>${n}</span><span className="t3">${s}</span></div>`;
+  return html`<${Tela} ctx=${ctx} eyebrow="Conferência no canteiro" titulo="Recebimento">
+    <div style=${{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 8 }}>
+      ${tile('Chegando', chegando.length, 'da coleta', '#B8962E')}${tile('Com avaria', comAv.length, plural(comAv.reduce((t, n) => t + resumoReceb(n).av, 0), 'peça'), '#9C3D6E')}${tile('Recebidas', recebidas.filter(n => (n.receb.em || '').slice(0, 7) === mes).length, 'este mês', '#3E7A5E')}</div>
+    <div className="dcols"><div className="dcol">
+    <div className="sec">Chegando da coleta<span className="t2">${plural(chegando.length, 'nota')}</span></div>
+    ${chegando.length ? chegando.map(n => { const tot = Object.values(recebidoNota(n)).reduce((a, b) => a + b, 0); const qn = (n.itens || []).reduce((t, i) => t + i.qtd, 0);
+      return html`<div key=${n.id} className="card pad" style=${{ gap: 10 }}>
+        <div style=${{ display: 'flex', alignItems: 'center', gap: 12 }}><${TileEmpresa} nome=${n.fornecedor} s=${36} /><span className="grow"><div style=${{ fontSize: 15, fontWeight: 700 }}>NF ${n.numero}</div><div className="t2">${n.local || 'Sem local'} · ${plural(n.itens.length, 'item', 'itens')}</div></span><span className="tag y">A conferir</span></div>
+        <span className="t2">Coleta: ${n.conferente || '—'} ${n.concluidaEm ? fmtDataCurta(dataLocal(new Date(n.concluidaEm))) + ' ' + fmtHora(n.concluidaEm) : ''} · ${nfmt(tot)} de ${nfmt(qn)} peças${qn - tot > 0 ? ' · ' + nfmt(qn - tot) + ' em falta' : ''}</span>
+        ${pode(u, 'notas') && html`<button className="btn sm" onClick=${() => ir('canteiro', 'conferir', { id: n.id })}>Conferir no canteiro</button>`}</div>`; })
+      : html`<div className="card"><${Vazio}>Nenhuma nota esperando. Elas aparecem aqui quando a coleta termina a conferência na fábrica.</${Vazio}></div>`}
+    </div><div className="dcol">
+    <div className="sec">Recebidas<span className="t2">${plural(recebidas.length, 'nota')}</span></div>
+    <div className="card">${recebidas.length ? recebidas.slice(0, 40).map(n => { const r = resumoReceb(n);
+      return html`<button key=${n.id} className="row" onClick=${() => ir('canteiro', 'nota', { id: n.id })}><span className="grow"><div className="t1">NF ${n.numero} · ${grupoEmpresa(n.fornecedor)}</div><div className="t2">${n.local || ''} · ${fmtDataCurta(dataLocal(new Date(n.receb.em)))}</div></span>
+        <span className=${'tag ' + (r.av ? 'm' : r.fa ? 'o' : 'ok')}>${r.av ? plural(r.av, 'avariada', 'avariadas') : r.fa ? r.fa + ' a menos' : 'Tudo certo'}</span><span className="chev">›</span></button>`; }) : html`<${Vazio}>Nenhuma nota recebida no canteiro ainda.</${Vazio}>`}</div>
+    </div></div>
+  </${Tela}>`;
+}
+function ConferirCanteiro({ ctx }) {
+  const { usuario: u, ir, nav } = ctx; useStore();
+  const nota = store.pegar('notas', nav.p.id);
+  const col = nota ? recebidoNota(nota) : {};
+  const LS = 'ccg_receb_' + (nota ? nota.id : '');
+  const [st, setSt] = useState(() => { try { const r = JSON.parse(localStorage.getItem(LS) || 'null'); if (r) return r; } catch (e) {} const o = {}; (nota ? nota.itens : []).forEach(i => o[i.key] = { q: col[i.key] || 0, av: {} }); return o; });
+  useEffect(() => { try { localStorage.setItem(LS, JSON.stringify(st)); } catch (e) {} }, [st]);
+  const [fechar, setFechar] = useState(false); const [feito, setFeito] = useState(null);
+  if (feito) return html`<${Tela} ctx=${ctx} titulo="Recebimento concluído" voltar=${() => ir('canteiro')}><${RelatorioRecebPronto} nota=${feito} /></${Tela}>`;
+  if (!nota) return html`<${Tela} ctx=${ctx} titulo="Recebimento" voltar=${() => ir('canteiro')}><${Vazio}>Nota não encontrada.</${Vazio}></${Tela}>`;
+  if (nota.receb && nota.receb.status === 'concluido') return html`<${Tela} ctx=${ctx} titulo="Recebimento" voltar=${() => ir('canteiro')}><${Vazio}>Esta nota já foi recebida no canteiro.</${Vazio}></${Tela}>`;
+  const up = (k, v) => setSt(Object.assign({}, st, { [k]: Object.assign({}, st[k], v) }));
+  const totCol = nota.itens.reduce((t, i) => t + (col[i.key] || 0), 0), totQ = nota.itens.reduce((t, i) => t + (Number((st[i.key] || {}).q) || 0), 0);
+  const totAv = nota.itens.reduce((t, i) => t + (((st[i.key] || {}).av || {}).q || 0), 0);
+  return html`<${Tela} ctx=${ctx} eyebrow=${'Recebimento · NF ' + nota.numero} titulo=${nota.local || 'Sem local'} voltar=${() => ir('canteiro')}>
+    <div className="card pad" style=${{ gap: 4, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}><span className="t2">Coleta contou <b style=${{ color: 'var(--navy)' }}>${nfmt(totCol)}</b> · aqui <b style=${{ color: 'var(--navy)' }}>${nfmt(totQ)}</b></span><span className="t3">${plural(nota.itens.length, 'item', 'itens')}</span></div>
+    <div className="note gr" style=${{ margin: 0 }}>Ao concluir, as peças entram em <b>${nota.local || 'Sem local'}</b>.</div>
+    ${nota.itens.map(i => { const x = st[i.key] || { q: 0, av: {} }; const dif = (Number(x.q) || 0) - (col[i.key] || 0);
+      return html`<div key=${i.key} className="card pad" style=${{ gap: 10 }}>
+        <div style=${{ display: 'flex', alignItems: 'center', gap: 10 }}><span className="grow"><div className="t1">${i.desc}</div><div className="t2">nota ${i.qtd} · coleta ${col[i.key] || 0}${dif ? ' · ' + (dif < 0 ? dif + ' a menos' : '+' + dif) : ''}</div></span><${Stepper} valor=${x.q} set=${(q) => up(i.key, { q })} /></div>
+        <${BlocoAvaria} titulo="Avaria" v=${x.av || {}} max=${Number(x.q) || 0} set=${(av) => up(i.key, { av })} /></div>`; })}
+    <${Rodape}><button className="btn block" onClick=${() => setFechar(true)}>Concluir recebimento${totAv ? ' · ' + plural(totAv, 'avariada', 'avariadas') : ''}</button></${Rodape}>
+    ${fechar && html`<${FecharCanteiro} ctx=${ctx} nota=${nota} st=${st} col=${col} aoFechar=${() => setFechar(false)} aoConcluir=${(d) => { try { localStorage.removeItem(LS); } catch (e) {} setFechar(false); setFeito(d); }} />`}
+  </${Tela}>`;
+}
+function FecharCanteiro({ ctx, nota, st, col, aoFechar, aoConcluir }) {
+  const { usuario: u } = ctx; const empresa = grupoEmpresa(nota.fornecedor);
+  const [nome, setNome] = useState(u.nome); const [sigC, setSigC] = useState(null); const [repNome, setRepNome] = useState(''); const [sigR, setSigR] = useState(null); const [ass, setAss] = useState(false);
+  const linhas = nota.itens.map(i => { const x = st[i.key] || {}; return { i, c: col[i.key] || 0, q: Number(x.q) || 0, av: x.av || {} }; });
+  const menos = linhas.filter(l => l.q < l.c), mais = linhas.filter(l => l.q > l.c), avs = linhas.filter(l => (l.av.q || 0) > 0);
+  const confirmar = () => {
+    const em = agoraISO(); const ops = []; const dest = 'F:' + (nota.local || 'Sem local'); const itens = {};
+    linhas.forEach(({ i, c, q, av }) => {
+      const entra = Math.min(q, c); if (entra > 0) ops.push(movimento('recebimento', i.key, entra, 'CAM', dest, nota.id, nome, { nf: nota.id }));
+      if (q < c) { const p = { id: uid('pd'), tipo: 'falta', origem: 'Recebimento NF ' + nota.numero, ref: nota.id, local: nota.local || 'Sem local', key: i.key, qtd: c - q, valor: (c - q) * (i.vu || 0), status: 'aberta', criadoEm: em, criadoPor: nome, obs: 'Coleta ' + c + ', canteiro ' + q };
+        ops.push({ c: 'pendencias', doc: p }, movimento('divergencia', i.key, c - q, 'CAM', 'PEND:' + p.id, p.id, nome, { nf: nota.id })); }
+      if (q > c) { const p = { id: uid('pd'), tipo: 'sobra', origem: 'Recebimento NF ' + nota.numero, ref: nota.id, local: nota.local || 'Sem local', key: i.key, qtd: q - c, valor: 0, status: 'aberta', criadoEm: em, criadoPor: nome, obs: 'Coleta ' + c + ', canteiro ' + q };
+        ops.push({ c: 'pendencias', doc: p }, movimento('sobra', i.key, q - c, 'SOBRA', dest, p.id, nome, { nf: '' })); }
+      if ((av.q || 0) > 0) ops.push({ c: 'pendencias', doc: { id: uid('pd'), tipo: 'avaria', origem: 'Recebimento NF ' + nota.numero, ref: nota.id, local: nota.local || 'Sem local', key: i.key, qtd: av.q, valor: av.q * (i.vu || 0), status: 'aberta', criadoEm: em, criadoPor: nome, obs: av.obs || '', fotos: av.fotos || [] } });
+      itens[i.key] = { col: c, q, avq: av.q || 0, fotos: av.fotos || [], obs: av.obs || '' };
+    });
+    const receb = { status: 'concluido', em, por: nome, itens, assinaturas: ass && (sigC || sigR) ? { confNome: nome, conf: sigC, repNome: repNome.trim(), rep: sigR } : null };
+    const doc = Object.assign({}, nota, { receb, recebDrive: { ok: false } });
+    ops.push({ c: 'notas', doc }); store.gravarVarios(ops);
+    toast('Recebimento concluído. Peças em ' + (nota.local || 'Sem local') + '.'); aoConcluir(doc);
+  };
+  return html`<${Sheet} titulo="Concluir recebimento" aoFechar=${aoFechar} rodape=${html`<button className="btn block" onClick=${confirmar}>Concluir</button>`}>
+    <div className="t2" style=${{ lineHeight: 1.5 }}>${plural(linhas.reduce((t, l) => t + Math.min(l.q, l.c), 0), 'peça')} entram em <b style=${{ color: 'var(--navy)' }}>${nota.local || 'Sem local'}</b>.</div>
+    ${menos.length > 0 && html`<div className="note m" style=${{ margin: 0 }}>Chegaram menos que na coleta: ${menos.map(l => l.i.desc + ' (' + (l.c - l.q) + ')').join(', ')}. Vira pendência.</div>`}
+    ${mais.length > 0 && html`<div className="note b" style=${{ margin: 0 }}>Chegaram a mais: ${mais.map(l => l.i.desc + ' (+' + (l.q - l.c) + ')').join(', ')}.</div>`}
+    ${avs.length > 0 && html`<div className="note o" style=${{ margin: 0 }}>Avariadas: ${avs.map(l => l.i.desc + ' (' + l.av.q + ')').join(', ')}. Cada uma vira pendência de avaria com a ${empresa}, com as fotos.</div>`}
+    <label className="f"><span className="lb">Quem conferiu</span><input className="inp" value=${nome} onChange=${(e) => setNome(e.target.value)} /></label>
+    <div className="chips"><button className=${'chip' + (!ass ? ' on' : '')} onClick=${() => setAss(false)}>Sem assinatura</button><button className=${'chip' + (ass ? ' on' : '')} onClick=${() => setAss(true)}>Assinar com o dedo</button></div>
+    ${ass && html`<${Assinatura} rotulo="Quem conferiu" valor=${sigC} set=${setSigC} />
+      <label className="f"><span className="lb">Representante da ${empresa} (opcional)</span><input className="inp" value=${repNome} onChange=${(e) => setRepNome(e.target.value)} /></label>
+      <${Assinatura} rotulo=${'Representante da ' + empresa} valor=${sigR} set=${setSigR} />`}
+  </${Sheet}>`;
+}
+function RecebimentoNota({ ctx }) {
+  const { ir, nav } = ctx; useStore(); const n = store.pegar('notas', nav.p.id); const [rel, setRel] = useState(false);
+  if (!n || !n.receb) return html`<${Tela} ctx=${ctx} titulo="Recebimento" voltar=${() => ir('canteiro')}><${Vazio}>Recebimento não encontrado.</${Vazio}></${Tela}>`;
+  const r = resumoReceb(n); const it = n.receb.itens || {};
+  return html`<${Tela} ctx=${ctx} eyebrow=${(n.local || '') + ' · ' + fmtDataCurta(dataLocal(new Date(n.receb.em)))} titulo=${'NF ' + n.numero + ' · ' + grupoEmpresa(n.fornecedor)} voltar=${() => ir('canteiro')} direita=${html`<button className="hbtn" onClick=${() => setRel(true)}><${Ic} n="doc" s=${16} />Relatório</button>`}>
+    <div className="card pad" style=${{ gap: 6 }}><div className="t2">Conferido por ${n.receb.por} · ${fmtDataHora(n.receb.em)}</div>
+      <div className="num4" style=${{ gridTemplateColumns: 'repeat(4,minmax(0,1fr))' }}>${[[nfmt((n.itens || []).reduce((t, i) => t + i.qtd, 0)), 'na nota'], [nfmt(r.col), 'na coleta'], [nfmt(r.q), 'no canteiro'], [nfmt(r.av), 'avariadas']].map(([v, l], ix) => html`<span key=${l}><b style=${{ color: ix === 3 && r.av ? 'var(--mag-t)' : 'inherit' }}>${v}</b><span className="t3">${l}</span></span>`)}</div></div>
+    <div className="card">${(n.itens || []).map(i => { const x = it[i.key] || {}; return html`<div key=${i.key} className="row" style=${{ flexWrap: 'wrap', alignItems: 'flex-start' }}><span className="grow"><div className="t1">${i.desc}</div><div className="t2">nota ${i.qtd} · coleta ${x.col || 0} · canteiro ${x.q || 0}${x.avq ? ' · ' : ''}${x.avq ? html`<b style=${{ color: 'var(--mag-t)' }}>${x.avq} avariada${x.avq > 1 ? 's' : ''}</b>` : ''}</div>${x.obs && html`<div className="t3">${x.obs}</div>`}${(x.fotos || []).length > 0 && html`<${FotosMini} ids=${x.fotos} />`}</span></div>`; })}</div>
+    ${rel && html`<${Sheet} titulo="Relatório do recebimento" aoFechar=${() => setRel(false)}><${RelatorioRecebPronto} nota=${n} /></${Sheet}>`}
+  </${Tela}>`;
+}
+// ---------- relatório do recebimento (PDF com as fotos das avarias) ----------
+async function fotosDataUrl(ids) { const out = {}; for (const id of ids) { try { const s = await store.lerFoto(id); if (s) out[id] = s; } catch (e) {} } return out; }
+function cabRelatorio(titulo, sub) {
+  return '<div style="display:flex;align-items:center;gap:16px;padding-bottom:12px;border-bottom:3px solid #AEC155"><img src="' + window.__LOGO__ + '" style="height:42px"><div style="flex:1;text-align:right"><div style="font-family:\'IBM Plex Mono\',monospace;font-size:9px;font-weight:600;letter-spacing:.16em;color:#5E7020">LINHA 4 · EXTENSÃO GÁVEA · CONTROLE DE PEÇAS</div><div style="font-size:19px;font-weight:700">' + esc(titulo) + '</div>' + (sub ? '<div style="font-size:10px;color:#4E5752">' + esc(sub) + '</div>' : '') + '</div></div>';
+}
+function paginaA4(corpo, rodape) { return '<div class="pg" style="width:794px;height:1123px;box-sizing:border-box;background:#fff;font-family:\'IBM Plex Sans\',Arial,sans-serif;color:#13152B;padding:40px 48px 28px;display:flex;flex-direction:column;gap:12px;font-size:11px">' + corpo + '<div style="flex:1"></div><div style="display:flex;justify-content:space-between;font-size:8.5px;color:#8A9289;border-top:1px solid #D7DBD0;padding-top:6px"><span>' + rodape + '</span><span>Gerado pelo app Controle de Peças · ' + fmtData(hoje()) + ' ' + fmtHora(agoraISO()) + '</span></div></div>'; }
+function blocoFotos(lista, fotos) { // lista: [{rot, ids}]
+  const cel = []; lista.forEach(x => (x.ids || []).forEach((id, k) => { if (fotos[id]) cel.push('<div style="display:flex;flex-direction:column;gap:3px"><img src="' + fotos[id] + '" style="width:220px;height:165px;object-fit:cover;border-radius:6px;border:1px solid #D7DBD0"><span style="font-size:9px;color:#4E5752">' + esc(x.rot) + ' · ' + (k + 1) + '/' + x.ids.length + '</span></div>'); }));
+  const pags = []; for (let i = 0; i < cel.length; i += 12) pags.push('<div style="display:flex;flex-wrap:wrap;gap:12px">' + cel.slice(i, i + 12).join('') + '</div>');
+  return pags;
+}
+async function pdfDePaginas(pags, titulo, aoProgresso) {
+  await loadScript(LIB_JSPDF);
+  const pdf = new window.jspdf.jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
+  for (let i = 0; i < pags.length; i++) { aoProgresso && aoProgresso('Montando página ' + (i + 1) + ' de ' + pags.length + '…'); const c = await fotografar(pags[i], 794); if (i) pdf.addPage(); pdf.addImage(c.toDataURL('image/jpeg', 0.88), 'JPEG', 0, 0, 210, 297); }
+  pdf.setProperties({ title: titulo, author: 'CCG · Controle de Peças' });
+  return pdf.output('blob');
+}
+async function paginasRecebimento(n) {
+  const it = (n.receb && n.receb.itens) || {}; const r = resumoReceb(n); const emp = grupoEmpresa(n.fornecedor);
+  const ids = []; (n.itens || []).forEach(i => ((it[i.key] || {}).fotos || []).forEach(id => ids.push(id))); const fotos = await fotosDataUrl(ids);
+  const sit = r.av ? ['RECEBIDA COM AVARIA', '#7A1556'] : r.fa ? ['RECEBIDA COM FALTA', '#7A1556'] : ['RECEBIDA SEM DIFERENÇA', '#10543A'];
+  const lg = LOGOS()[emp.toLowerCase()];
+  const topo = cabRelatorio('Relatório de recebimento no canteiro', '') +
+    '<div style="display:flex;align-items:center;gap:14px">' + (lg ? '<img src="' + lg + '" style="width:52px;height:52px;border:1px solid #E6EAE0;border-radius:12px">' : '') + '<div style="flex:1"><div style="font-size:22px;font-weight:700">NF ' + esc(n.numero) + ' · ' + esc(emp) + '</div><div style="color:#4E5752">' + esc(n.local || '') + ' · recebida ' + fmtData(dataLocal(new Date(n.receb.em))) + ' ' + fmtHora(n.receb.em) + ' · conferente ' + esc(n.receb.por) + '</div></div><span style="border:1.5px solid ' + sit[1] + ';color:' + sit[1] + ';font-weight:700;padding:6px 10px;border-radius:6px;font-size:10px">' + sit[0] + '</span></div>' +
+    '<div style="display:flex;border:1px solid #D7DBD0;border-radius:10px;overflow:hidden">' + [[nfmt((n.itens || []).reduce((t, i) => t + i.qtd, 0)), 'na nota', ''], [nfmt(r.col), 'na coleta', ''], [nfmt(r.q), 'no canteiro', ''], [nfmt(r.av), 'avariadas', r.av ? '#7A1556' : ''], [brl(r.avV).replace(',00', ''), 'valor avariado', r.avV ? '#7A1556' : '']].map(([v, l, c], ix) => '<div style="flex:1;padding:10px 12px;' + (ix < 4 ? 'border-right:1px solid #D7DBD0' : '') + '"><div style="font-size:19px;font-weight:700;' + (c ? 'color:' + c : '') + '">' + v + '</div><div style="font-size:9.5px;color:#4E5752">' + l + '</div></div>').join('') + '</div>';
+  const th = (t, a) => '<th style="padding:5px 6px;font-size:8.5px;text-transform:uppercase;color:#4E5752;text-align:' + a + ';border-bottom:1.5px solid #13152B">' + t + '</th>';
+  const linhas = (n.itens || []).map(i => { const x = it[i.key] || {}; const ruim = (x.avq || 0) > 0 || (x.q || 0) !== (x.col || 0);
+    return '<tr style="background:' + (ruim ? '#FBF3F7' : '#fff') + '"><td style="padding:4px 6px">' + esc(i.desc) + '</td><td style="padding:4px 6px;text-align:right">' + i.qtd + '</td><td style="padding:4px 6px;text-align:right">' + (x.col || 0) + '</td><td style="padding:4px 6px;text-align:right;font-weight:600">' + (x.q || 0) + '</td><td style="padding:4px 6px;text-align:right;color:#7A1556;font-weight:700">' + (x.avq || '—') + '</td><td style="padding:4px 6px;color:#4E5752">' + esc([x.obs, (x.q || 0) < (x.col || 0) ? ((x.col || 0) - (x.q || 0)) + ' a menos que a coleta' : '', (x.q || 0) > (x.col || 0) ? '+' + ((x.q || 0) - (x.col || 0)) + ' a mais' : ''].filter(Boolean).join(' · ')) + '</td></tr>'; });
+  const cabT = '<table style="width:100%;border-collapse:collapse;font-size:10px"><tr>' + th('Descrição', 'left') + th('Nota', 'right') + th('Coleta', 'right') + th('Canteiro', 'right') + th('Avariadas', 'right') + th('Observação', 'left') + '</tr>';
+  const a = n.receb.assinaturas; const ass = a ? '<div style="display:flex;gap:40px;padding:0 20px">' + [[a.conf, a.confNome, 'Conferente · CCG'], [a.rep, a.repNome, 'Representante ' + emp]].map(([src, nm, p]) => '<div style="flex:1;text-align:center"><div style="height:46px;display:flex;align-items:flex-end;justify-content:center">' + (src ? '<img src="' + src + '" style="max-height:44px">' : '') + '</div><div style="border-top:1px solid #13152B"></div><b style="font-size:10px">' + esc(nm || '') + '</b><div style="font-size:9px;color:#4E5752">' + p + '</div></div>').join('') + '</div>' : '';
+  const rod = 'NF ' + esc(n.numero) + ' · ' + esc(emp) + ' · ' + esc(n.local || '');
+  const pags = []; const porPag = 30;
+  for (let i = 0; i < Math.max(1, linhas.length); i += porPag) pags.push(paginaA4((i === 0 ? topo : cabRelatorio('Relatório de recebimento no canteiro', 'NF ' + n.numero + ' · continuação')) + cabT + linhas.slice(i, i + porPag).join('') + '</table>', rod));
+  const fl = blocoFotos((n.itens || []).filter(i => ((it[i.key] || {}).fotos || []).length).map(i => ({ rot: i.desc, ids: it[i.key].fotos })), fotos);
+  fl.forEach((b, k) => pags.push(paginaA4(cabRelatorio('Fotos das avarias', 'NF ' + n.numero + (fl.length > 1 ? ' · ' + (k + 1) + '/' + fl.length : '')) + b, rod)));
+  if (ass) pags[pags.length - 1] = pags[pags.length - 1].replace('<div style="flex:1"></div>', '<div style="flex:1"></div>' + ass);
+  return pags;
+}
+function RelatorioRecebPronto({ nota }) {
+  const [ocup, setOcup] = useState('');
+  const gerar = async () => { setOcup('Gerando PDF…'); try { const b = await pdfDePaginas(await paginasRecebimento(nota), 'Recebimento NF ' + nota.numero, setOcup); const r = await compartilharArquivo(b, 'Recebimento_NF' + nota.numero + '_' + grupoEmpresa(nota.fornecedor).replace(/\W+/g, '') + '.pdf', 'Recebimento NF ' + nota.numero); if (r === 'baixado') toast('PDF salvo no aparelho.'); } catch (e) { toast('Não consegui gerar o PDF: ' + (e.message || e)); } setOcup(''); };
+  const r = resumoReceb(nota);
+  return html`<div style=${{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div className="note ok" style=${{ margin: 0 }}>NF ${nota.numero}: ${nfmt(r.q)} peças em ${nota.local || 'Sem local'}${r.av ? ' · ' + plural(r.av, 'avariada', 'avariadas') : ''}${r.fa ? ' · ' + r.fa + ' a menos que a coleta' : ''}.</div>
+    <button className="btn block" disabled=${!!ocup} onClick=${gerar}><${Ic} n="download" s=${18} />${ocup || 'Relatório em PDF (com as fotos)'}</button>
+    ${store.modo !== 'demo' && html`<div className="hint" style=${{ padding: 0 }}>O relatório também vai sozinho para o Drive, na pasta da nota › 2 · Recebimento.</div>`}
+  </div>`;
+}
+
+/* ================= ABA FRENTES · devolver ao fornecedor (por nota) ================= */
+function DevolverFornecedorTela({ ctx }) {
+  const { usuario: u, ir } = ctx; useStore();
+  const dist = distribuicaoNF();
+  // notas com peças na obra (na frente ou com colaborador)
+  const notas = store.todos('notas').filter(n => n.status !== 'rascunho').map(n => {
+    let fr = 0, colab = 0; const porLocal = {};
+    Object.keys(saldosNF()).forEach(k => { if (!k.startsWith('F:')) return; const q = (saldosNF()[k] || {})[n.id] || 0; if (q > 0) { fr += q; const l = k.slice(2, k.lastIndexOf('|')); porLocal[l] = (porLocal[l] || 0) + q; } });
+    (n.itens || []).forEach(i => { const d = dist[n.id + '|' + i.key]; if (d) colab += d.colab || 0; });
+    return { n, emp: grupoEmpresa(n.fornecedor), fr, colab, porLocal };
+  }).filter(x => x.fr + x.colab > 0);
+  const empresas = [...new Set(notas.map(x => x.emp))].sort();
+  const [emp, setEmp] = useState(empresas[0] || ''); const [frente, setFrente] = useState(''); const [sel, setSel] = useState({});
+  const frentes = [...new Set(notas.filter(x => x.emp === emp).flatMap(x => Object.keys(x.porLocal).concat(x.n.local ? [x.n.local] : [])))].sort();
+  const lista = notas.filter(x => x.emp === emp && (!frente || x.porLocal[frente] || x.n.local === frente));
+  const escolhidas = lista.filter(x => sel[x.n.id] && x.fr > 0); const total = escolhidas.reduce((t, x) => t + (frente ? (x.porLocal[frente] || 0) : x.fr), 0);
+  const devolver = () => {
+    if (!escolhidas.length) return toast('Marque as notas que vão voltar.');
+    if (!confirm('Devolver ' + nfmt(total) + ' peças para a ' + emp + '? As peças saem do saldo da obra.')) return;
+    const ops = []; const snf = saldosNF();
+    escolhidas.forEach(x => Object.keys(snf).forEach(k => { if (!k.startsWith('F:')) return; const l = k.slice(2, k.lastIndexOf('|')); if (frente && l !== frente) return; const key = k.slice(k.lastIndexOf('|') + 1); const q = (snf[k] || {})[x.n.id] || 0;
+      if (q > 0) ops.push(movimento('devolucao_fornecedor', key, q, 'F:' + l, 'FORN:' + emp, x.n.id, u.nome, { nf: x.n.id })); }));
+    store.gravarVarios(ops); setSel({}); toast('Devolução registrada: ' + nfmt(total) + ' peças.');
+  };
+  return html`<${Tela} ctx=${ctx} eyebrow="Frentes · fim de locação" titulo="Devolver ao fornecedor" voltar=${() => ir('cd')}>
+    ${!notas.length ? html`<div className="card"><${Vazio}>Nenhuma peça de fornecedor na obra.</${Vazio}></div>` : html`
+    <div className="f"><span className="lb">Fornecedor</span><div className="chips">${empresas.map(e => html`<button key=${e} className=${'chip' + (emp === e ? ' on' : '')} onClick=${() => { setEmp(e); setFrente(''); setSel({}); }}>${e}</button>`)}</div></div>
+    <label className="f"><span className="lb">Frente</span><select className="inp" value=${frente} onChange=${(e) => { setFrente(e.target.value); setSel({}); }} style=${{ fontWeight: 600 }}><option value="">Todas as frentes</option>${frentes.map(l => html`<option key=${l} value=${l}>${l}</option>`)}</select></label>
+    <div className="sec">Notas da ${emp} na obra<span className="t2">${plural(lista.length, 'nota')}</span></div>
+    ${lista.map(x => { const fr = frente ? (x.porLocal[frente] || 0) : x.fr; const on = !!sel[x.n.id]; const tot = Math.max(1, fr + x.colab);
+      return html`<button key=${x.n.id} className="card pad" style=${{ gap: 8, textAlign: 'left', boxShadow: on ? '0 0 0 2px var(--navy)' : 'none' }} onClick=${() => fr > 0 && setSel(Object.assign({}, sel, { [x.n.id]: !on }))}>
+        <div style=${{ display: 'flex', alignItems: 'center', gap: 10 }}><span style=${{ width: 22, height: 22, borderRadius: 7, border: '2px solid var(--navy)', background: on ? 'var(--navy)' : '#fff', color: '#AEC155', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}>${on && html`<${Ic} n="check" s=${14} w=${3} />`}</span>
+          <span className="grow"><div style=${{ fontSize: 15, fontWeight: 700 }}>NF ${x.n.numero}</div><div className="t2">${x.n.local || 'Sem local'}</div></span><b style=${{ fontSize: 15 }}>${nfmt(fr + x.colab)} pç</b></div>
+        <div style=${{ display: 'flex', height: 6, borderRadius: 999, overflow: 'hidden', background: 'var(--soft)' }}><span style=${{ width: fr / tot * 100 + '%', background: 'var(--navy)' }}></span><span style=${{ width: x.colab / tot * 100 + '%', background: 'var(--green)' }}></span></div>
+        <span className="t2">${nfmt(fr)} na frente · ${nfmt(x.colab)} com colaborador${x.colab ? ' (só volta depois da devolução do termo)' : ''}</span></button>`; })}
+    ${pode(u, 'cd') && html`<${Rodape}><button className="btn block" disabled=${!escolhidas.length} onClick=${devolver}>${escolhidas.length ? 'Devolver ' + (escolhidas.length === 1 ? 'NF ' + escolhidas[0].n.numero : plural(escolhidas.length, 'nota')) + ' · ' + nfmt(total) + ' pç' : 'Marque as notas'}</button></${Rodape}>`}`}
+  </${Tela}>`;
+}
+
+/* ================= ABA CONFERÊNCIA · todo dia 10 (domingo passa para segunda) ================= */
+function dataConferencia(ano, mes) { const d = new Date(ano, mes, 10); if (d.getDay() === 0) d.setDate(11); return dataLocal(d); }
+function conferenciaMensalAtual() {
+  return memo('confMensal', () => {
+    const H = hoje(); const [a, m] = H.split('-').map(Number);
+    let ref = dataConferencia(a, m - 1); let ano = a, mes = m - 1;
+    if (H < ref) { const d = new Date(a, m - 2, 1); ano = d.getFullYear(); mes = d.getMonth(); ref = dataConferencia(ano, mes); }
+    const chave = ano + '-' + String(mes + 1).padStart(2, '0');
+    const prox = H < dataConferencia(a, m - 1) ? dataConferencia(a, m - 1) : (() => { const d = new Date(a, m, 1); return dataConferencia(d.getFullYear(), d.getMonth()); })();
+    const docs = store.todos('conferencias').filter(c => c.mes === chave);
+    const locais = [...new Set(locaisComSaldo().concat(store.todos('movimentos').filter(x => x.para && x.para.startsWith('COL:')).map(x => x.para.slice(4))))].filter(l => esperadoMensal(l).total > 0 || docs.some(c => c.local === l)).sort((x, y) => x.localeCompare(y, 'pt-BR'));
+    const pendentes = locais.filter(l => !docs.some(c => c.local === l)).length;
+    return { chave, data: ref, prox, docs, locais, pendentes };
+  });
+}
+const NOME_MES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const nomeMes = (chave) => NOME_MES[Number(chave.slice(5, 7)) - 1] + ' de ' + chave.slice(0, 4);
+function esperadoMensal(local) { // peças da frente: na frente + com colaborador, por peça
+  const fr = saldoLugar('F:' + local), co = saldoLugar('COL:' + local); const out = {};
+  Object.keys(fr).concat(Object.keys(co)).forEach(k => { const a = Math.max(0, fr[k] || 0), b = Math.max(0, co[k] || 0); if (a + b > 0) out[k] = { fr: a, co: b, tot: a + b }; });
+  return { itens: out, total: Object.values(out).reduce((t, x) => t + x.tot, 0) };
+}
+function idConf(chave, local) { return 'cm-' + chave + '-' + norm(local).replace(/[^a-z0-9]+/g, '-').slice(0, 40); }
+function TelaConfMensal({ ctx }) {
+  const { usuario: u, ir } = ctx; useStore(); const c = conferenciaMensalAtual(); const H = hoje();
+  const feitos = c.locais.filter(l => c.docs.some(d => d.local === l)).length;
+  const meses = [...new Set(store.todos('conferencias').map(x => x.mes))].filter(m => m !== c.chave).sort().reverse();
+  const proxPend = c.locais.find(l => !c.docs.some(d => d.local === l));
+  return html`<${Tela} ctx=${ctx} eyebrow="Mensal · dia 10" titulo="Conferência">
+    <div className="card pad" style=${{ background: 'var(--navy)', color: '#fff', gap: 6 }}><span className="eyebrow">Próxima conferência</span><b style=${{ fontSize: 22 }}>${diaSemana(c.prox)}, ${fmtData(c.prox)}</b><span style=${{ fontSize: 12, color: '#C9CEC2' }}>Todo dia 10. Se cair no domingo, passa para segunda.</span></div>
+    <div className="sec">Conferência de ${NOME_MES[Number(c.chave.slice(5, 7)) - 1]} · ${fmtDataCurta(c.data)}<span className="t2">${feitos} de ${c.locais.length} frentes</span></div>
+    <div style=${{ display: 'flex', height: 8, borderRadius: 999, overflow: 'hidden', background: 'var(--soft)' }}><span style=${{ width: (c.locais.length ? feitos / c.locais.length * 100 : 0) + '%', background: 'var(--ok)' }}></span></div>
+    <div className="card">${c.locais.length ? c.locais.map(l => { const d = c.docs.find(x => x.local === l); const e = esperadoMensal(l); const r = d ? resumoConf(d) : null;
+      return html`<button key=${l} className="row" onClick=${() => ir('conf', 'local', { local: l, mes: c.chave })}><span className="grow"><div className="t1">${l}</div><div className="t2">${d ? nfmt(r.esp) + ' peças · ' + d.por + ' · ' + fmtDataCurta(dataLocal(new Date(d.em))) + ' ' + fmtHora(d.em) : nfmt(e.total) + ' peças'}</div></span>
+        <span className=${'tag ' + (!d ? 'y' : r.perd || r.dan ? 'm' : 'ok')}>${!d ? 'A conferir' : r.perd || r.dan ? [r.perd ? plural(r.perd, 'perdida', 'perdidas') : '', r.dan ? plural(r.dan, 'danificada', 'danificadas') : ''].filter(Boolean).join(' · ') : 'Conferido'}</span><span className="chev">›</span></button>`; }) : html`<${Vazio}>Nenhuma frente com peças.</${Vazio}>`}</div>
+    ${proxPend && (pode(u, 'cd') || pode(u, 'frente')) && html`<button className="btn block" onClick=${() => ir('conf', 'local', { local: proxPend, mes: c.chave })}>Conferir ${proxPend}</button>`}
+    ${c.docs.length > 0 && html`<button className="btn white block" onClick=${() => ir('conf', 'relatorio', { mes: c.chave })}><${Ic} n="doc" s=${18} />Relatório da conferência de ${NOME_MES[Number(c.chave.slice(5, 7)) - 1]}</button>`}
+    ${meses.length > 0 && html`<div className="sec">Meses anteriores</div><div className="card">${meses.map(m => html`<button key=${m} className="row" onClick=${() => ir('conf', 'relatorio', { mes: m })}><span className="grow"><div className="t1">${nomeMes(m)}</div><div className="t2">${plural(store.todos('conferencias').filter(x => x.mes === m).length, 'frente conferida', 'frentes conferidas')}</div></span><span className="chev">›</span></button>`)}</div>`}
+  </${Tela}>`;
+}
+function resumoConf(d) { let esp = 0, cont = 0, perd = 0, sob = 0, dan = 0, val = 0; (d.itens || []).forEach(i => { esp += i.esperado; cont += i.contado; perd += i.perdidas || 0; sob += Math.max(0, i.contado - i.esperado); dan += i.danificadas || 0; val += ((i.perdidas || 0) + (i.danificadas || 0)) * (i.vu || 0); }); return { esp, cont, perd, sob, dan, val }; }
+function ConferirMensal({ ctx }) {
+  const { usuario: u, ir, nav } = ctx; useStore(); const { local, mes } = nav.p;
+  const doc = store.pegar('conferencias', idConf(mes, local));
+  const e = esperadoMensal(local); const keys = Object.keys(e.itens).sort((a, b) => descItem(a).localeCompare(descItem(b)));
+  const LS = 'ccg_cm_' + idConf(mes, local);
+  const [st, setSt] = useState(() => { try { const r = JSON.parse(localStorage.getItem(LS) || 'null'); if (r) return r; } catch (er) {} const o = {}; keys.forEach(k => o[k] = { q: e.itens[k].tot, dan: {} }); return o; });
+  useEffect(() => { try { localStorage.setItem(LS, JSON.stringify(st)); } catch (er) {} }, [st]);
+  const [nome, setNome] = useState(u.nome); const [conf, setConf] = useState(false);
+  const podeC = pode(u, 'cd') || pode(u, 'frente', local);
+  if (doc) return html`<${Tela} ctx=${ctx} eyebrow=${'Conferência de ' + nomeMes(mes)} titulo=${local} voltar=${() => ir('conf')}><${ConfMensalFeita} d=${doc} /></${Tela}>`;
+  const up = (k, v) => setSt(Object.assign({}, st, { [k]: Object.assign({}, st[k], v) }));
+  const linhas = keys.map(k => { const x = st[k] || { q: 0, dan: {} }; return { k, esp: e.itens[k].tot, co: e.itens[k].co, q: Number(x.q) || 0, dan: x.dan || {} }; });
+  const tot = linhas.reduce((t, l) => t + l.q, 0), perd = linhas.reduce((t, l) => t + Math.max(0, l.esp - l.q), 0), dan = linhas.reduce((t, l) => t + (l.dan.q || 0), 0);
+  const salvar = () => {
+    const em = agoraISO(); const ops = []; const itens = [];
+    linhas.forEach(l => { const vu = catalogoItem(l.k).vu || 0; const p = l.esp - l.q;
+      if (p > 0) { const pd = { id: uid('pd'), tipo: 'perda', origem: 'Conferência mensal ' + fmtData(dataConferencia(Number(mes.slice(0, 4)), Number(mes.slice(5, 7)) - 1)), ref: null, local, key: l.k, qtd: p, valor: p * vu, status: 'aberta', criadoEm: em, criadoPor: nome, obs: 'Esperadas ' + l.esp + ', contadas ' + l.q };
+        ops.push({ c: 'pendencias', doc: pd }); const naF = Math.max(0, saldoLugar('F:' + local)[l.k] || 0); const a = Math.min(p, naF);
+        movFIFO('perda_mensal', l.k, a, 'F:' + local, 'PEND:' + pd.id, pd.id, nome).forEach(o => ops.push(o)); if (p - a > 0) movFIFO('perda_mensal', l.k, p - a, 'COL:' + local, 'PEND:' + pd.id, pd.id, nome).forEach(o => ops.push(o)); }
+      if (p < 0) { const pd = { id: uid('pd'), tipo: 'sobra', origem: 'Conferência mensal', ref: null, local, key: l.k, qtd: -p, valor: 0, status: 'aberta', criadoEm: em, criadoPor: nome, obs: 'Esperadas ' + l.esp + ', contadas ' + l.q };
+        ops.push({ c: 'pendencias', doc: pd }, movimento('sobra', l.k, -p, 'SOBRA', 'F:' + local, pd.id, nome, { nf: '' })); }
+      if ((l.dan.q || 0) > 0) ops.push({ c: 'pendencias', doc: { id: uid('pd'), tipo: 'avaria', origem: 'Conferência mensal', ref: null, local, key: l.k, qtd: l.dan.q, valor: l.dan.q * vu, status: 'aberta', criadoEm: em, criadoPor: nome, obs: l.dan.obs || '', fotos: l.dan.fotos || [] } });
+      itens.push({ key: l.k, desc: descItem(l.k), vu, esperado: l.esp, comColab: l.co, contado: l.q, perdidas: Math.max(0, p), danificadas: l.dan.q || 0, fotos: l.dan.fotos || [], obs: l.dan.obs || '' });
+    });
+    ops.push({ c: 'conferencias', doc: { id: idConf(mes, local), mes, data: dataConferencia(Number(mes.slice(0, 4)), Number(mes.slice(5, 7)) - 1), local, por: nome, em, itens, status: 'concluida', drive: { ok: false } } });
+    store.gravarVarios(ops); try { localStorage.removeItem(LS); } catch (er) {} toast('Conferência de ' + local + ' concluída.'); setConf(false);
+  };
+  return html`<${Tela} ctx=${ctx} eyebrow=${'Conferência de ' + nomeMes(mes)} titulo=${local} voltar=${() => ir('conf')}>
+    <div className="card pad" style=${{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}><span className="t2">Esperadas <b style=${{ color: 'var(--navy)' }}>${nfmt(e.total)}</b> · contadas <b style=${{ color: 'var(--navy)' }}>${nfmt(tot)}</b></span>${(perd || dan) ? html`<span className="t2" style=${{ color: 'var(--mag-t)', fontWeight: 600 }}>${[perd ? plural(perd, 'perdida', 'perdidas') : '', dan ? plural(dan, 'danificada', 'danificadas') : ''].filter(Boolean).join(' · ')}</span>` : null}</div>
+    ${!keys.length && html`<div className="card"><${Vazio}>Nenhuma peça nesta frente.</${Vazio}></div>`}
+    ${linhas.map(l => { const p = l.esp - l.q; return html`<div key=${l.k} className="card pad" style=${{ gap: 10 }}>
+      <div style=${{ display: 'flex', alignItems: 'center', gap: 10 }}><span className="grow"><div className="t1">${descItem(l.k)}</div><div className="t2">esperadas ${l.esp}${l.co ? ' (' + l.co + ' com colaborador)' : ''}</div></span><${Stepper} valor=${st[l.k].q} set=${(q) => up(l.k, { q })} /></div>
+      ${p > 0 && html`<div className="note m" style=${{ margin: 0 }}>Faltam ${p} · ficam como <b>perdidas</b> · ${brl(p * (catalogoItem(l.k).vu || 0))} · vira pendência</div>`}
+      ${p < 0 && html`<div className="note b" style=${{ margin: 0 }}>${-p} a mais · vira pendência de sobra</div>`}
+      <${BlocoAvaria} titulo="Danificada" v=${l.dan} max=${l.q} set=${(dan) => up(l.k, { dan })} /></div>`; })}
+    ${keys.length > 0 && podeC && html`<${Rodape}><button className="btn block" onClick=${() => setConf(true)}>Concluir conferência desta frente</button></${Rodape}>`}
+    ${conf && html`<${Sheet} titulo="Concluir conferência" aoFechar=${() => setConf(false)} rodape=${html`<button className="btn block" onClick=${salvar}>Concluir</button>`}>
+      <div className="t2">${local} · ${nfmt(tot)} de ${nfmt(e.total)} peças${perd ? ' · ' + plural(perd, 'perdida', 'perdidas') : ''}${dan ? ' · ' + plural(dan, 'danificada', 'danificadas') : ''}.</div>
+      <label className="f"><span className="lb">Quem conferiu</span><input className="inp" value=${nome} onChange=${(ev) => setNome(ev.target.value)} /></label></${Sheet}>`}
+  </${Tela}>`;
+}
+function ConfMensalFeita({ d }) {
+  const r = resumoConf(d); const [ocup, setOcup] = useState('');
+  const pdf = async () => { setOcup('Gerando PDF…'); try { const b = await pdfDePaginas(await paginasMensal([d], d.mes), 'Conferência ' + d.local, setOcup); await compartilharArquivo(b, 'Conferencia_mensal_' + d.data + '_' + norm(d.local).replace(/[^a-z0-9]+/g, '_') + '.pdf', 'Conferência ' + d.local); } catch (e) { toast('Não consegui gerar: ' + (e.message || e)); } setOcup(''); };
+  return html`<div className="card pad" style=${{ gap: 6 }}><div className="t2">Conferido por ${d.por} · ${fmtDataHora(d.em)}</div><div className="t1">${nfmt(r.cont)} de ${nfmt(r.esp)} peças${r.perd ? ' · ' + plural(r.perd, 'perdida', 'perdidas') : ''}${r.dan ? ' · ' + plural(r.dan, 'danificada', 'danificadas') : ''}</div></div>
+    <div className="card">${(d.itens || []).map(i => html`<div key=${i.key} className="row" style=${{ alignItems: 'flex-start' }}><span className="grow"><div className="t1">${i.desc}</div><div className="t2">esperadas ${i.esperado} · contadas ${i.contado}${i.perdidas ? ' · ' + i.perdidas + ' perdidas' : ''}${i.danificadas ? ' · ' + i.danificadas + ' danificadas' : ''}</div>${i.obs && html`<div className="t3">${i.obs}</div>`}${(i.fotos || []).length > 0 && html`<${FotosMini} ids=${i.fotos} />`}</span>${(i.perdidas || i.danificadas) ? html`<span className="tag m">${(i.perdidas || 0) + (i.danificadas || 0)}</span>` : html`<span className="tag ok">ok</span>`}</div>`)}</div>
+    <button className="btn block" disabled=${!!ocup} onClick=${pdf}><${Ic} n="download" s=${18} />${ocup || 'Relatório desta frente (PDF)'}</button>`;
+}
+async function paginasMensal(docs, mes) {
+  const ids = []; docs.forEach(d => (d.itens || []).forEach(i => (i.fotos || []).forEach(id => ids.push(id)))); const fotos = await fotosDataUrl(ids);
+  const data = docs[0] ? docs[0].data : ''; const titulo = 'Conferência mensal · ' + fmtData(data);
+  const th = (t, a) => '<th style="padding:5px 6px;font-size:8.5px;text-transform:uppercase;color:#4E5752;text-align:' + a + ';border-bottom:1.5px solid #13152B">' + t + '</th>';
+  const pags = [];
+  if (docs.length > 1) { // resumo de todas as frentes
+    const tot = docs.map(d => [d, resumoConf(d)]); const s = tot.reduce((a, [, r]) => ({ esp: a.esp + r.esp, cont: a.cont + r.cont, perd: a.perd + r.perd, dan: a.dan + r.dan, val: a.val + r.val }), { esp: 0, cont: 0, perd: 0, dan: 0, val: 0 });
+    pags.push(paginaA4(cabRelatorio(titulo, 'Resumo de todas as frentes · ' + nomeMes(mes)) +
+      '<div style="display:flex;border:1px solid #D7DBD0;border-radius:10px;overflow:hidden">' + [[nfmt(s.esp), 'esperadas', ''], [nfmt(s.cont), 'contadas', ''], [nfmt(s.perd), 'perdidas', s.perd ? '#7A1556' : ''], [nfmt(s.dan), 'danificadas', s.dan ? '#7A1556' : ''], [brl(s.val).replace(',00', ''), 'valor', s.val ? '#7A1556' : '']].map(([v, l, c], ix) => '<div style="flex:1;padding:10px 12px;' + (ix < 4 ? 'border-right:1px solid #D7DBD0' : '') + '"><div style="font-size:19px;font-weight:700;' + (c ? 'color:' + c : '') + '">' + v + '</div><div style="font-size:9.5px;color:#4E5752">' + l + '</div></div>').join('') + '</div>' +
+      '<table style="width:100%;border-collapse:collapse;font-size:10.5px"><tr>' + th('Frente', 'left') + th('Conferido por', 'left') + th('Esperadas', 'right') + th('Contadas', 'right') + th('Perdidas', 'right') + th('Danificadas', 'right') + th('Valor', 'right') + '</tr>' +
+      tot.map(([d, r]) => '<tr><td style="padding:5px 6px;font-weight:600">' + esc(d.local) + '</td><td style="padding:5px 6px">' + esc(d.por) + ' · ' + fmtDataCurta(dataLocal(new Date(d.em))) + '</td><td style="padding:5px 6px;text-align:right">' + r.esp + '</td><td style="padding:5px 6px;text-align:right">' + r.cont + '</td><td style="padding:5px 6px;text-align:right;color:#7A1556">' + (r.perd || '—') + '</td><td style="padding:5px 6px;text-align:right;color:#7A1556">' + (r.dan || '—') + '</td><td style="padding:5px 6px;text-align:right">' + (r.val ? brl(r.val) : '—') + '</td></tr>').join('') + '</table>', 'Conferência mensal · ' + nomeMes(mes)));
+  }
+  docs.forEach(d => { const r = resumoConf(d);
+    const linhas = (d.itens || []).map(i => '<tr style="background:' + ((i.perdidas || i.danificadas) ? '#FBF3F7' : '#fff') + '"><td style="padding:4px 6px">' + esc(i.desc) + '</td><td style="padding:4px 6px;text-align:right">' + i.esperado + '</td><td style="padding:4px 6px;text-align:right;font-weight:600">' + i.contado + '</td><td style="padding:4px 6px;text-align:right;color:#7A1556;font-weight:700">' + (i.perdidas || '—') + '</td><td style="padding:4px 6px;text-align:right;color:#7A1556;font-weight:700">' + (i.danificadas || '—') + '</td><td style="padding:4px 6px;color:#4E5752">' + esc(i.obs || '') + '</td></tr>');
+    const cab = '<table style="width:100%;border-collapse:collapse;font-size:10px"><tr>' + th('Peça', 'left') + th('Esperadas', 'right') + th('Contadas', 'right') + th('Perdidas', 'right') + th('Danificadas', 'right') + th('Observação', 'left') + '</tr>';
+    const topo = cabRelatorio(titulo, d.local + ' · conferido por ' + d.por + ' em ' + fmtData(dataLocal(new Date(d.em))) + ' ' + fmtHora(d.em)) + '<div style="font-size:12px"><b>' + nfmt(r.cont) + '</b> de <b>' + nfmt(r.esp) + '</b> peças · <b style="color:#7A1556">' + r.perd + ' perdidas</b> · <b style="color:#7A1556">' + r.dan + ' danificadas</b>' + (r.val ? ' · ' + brl(r.val) : '') + '</div>';
+    for (let k = 0; k < Math.max(1, linhas.length); k += 32) pags.push(paginaA4((k ? cabRelatorio(titulo, d.local + ' · continuação') : topo) + cab + linhas.slice(k, k + 32).join('') + '</table>', 'Conferência mensal · ' + esc(d.local)));
+    blocoFotos((d.itens || []).filter(i => (i.fotos || []).length).map(i => ({ rot: i.desc, ids: i.fotos })), fotos).forEach(b => pags.push(paginaA4(cabRelatorio('Fotos das peças danificadas', d.local) + b, 'Conferência mensal · ' + esc(d.local))));
+  });
+  return pags;
+}
+function RelatorioMensal({ ctx }) {
+  const { ir, nav } = ctx; useStore(); const mes = nav.p.mes; const docs = store.todos('conferencias').filter(c => c.mes === mes).sort((a, b) => a.local.localeCompare(b.local, 'pt-BR'));
+  const [ocup, setOcup] = useState('');
+  const pdf = async () => { setOcup('Gerando PDF…'); try { const b = await pdfDePaginas(await paginasMensal(docs, mes), 'Conferência mensal ' + mes, setOcup); await compartilharArquivo(b, 'Conferencia_mensal_' + (docs[0] ? docs[0].data : mes) + '_resumo.pdf', 'Conferência mensal'); } catch (e) { toast('Não consegui gerar: ' + (e.message || e)); } setOcup(''); };
+  const s = docs.map(resumoConf).reduce((a, r) => ({ esp: a.esp + r.esp, cont: a.cont + r.cont, perd: a.perd + r.perd, dan: a.dan + r.dan }), { esp: 0, cont: 0, perd: 0, dan: 0 });
+  return html`<${Tela} ctx=${ctx} eyebrow="Conferência mensal" titulo=${nomeMes(mes)} voltar=${() => ir('conf')}>
+    <div className="card pad" style=${{ gap: 4 }}><div className="t1">${nfmt(s.cont)} de ${nfmt(s.esp)} peças conferidas</div><div className="t2">${plural(s.perd, 'perdida', 'perdidas')} · ${plural(s.dan, 'danificada', 'danificadas')} · ${plural(docs.length, 'frente', 'frentes')}</div></div>
+    <div className="card">${docs.map(d => { const r = resumoConf(d); return html`<button key=${d.id} className="row" onClick=${() => ir('conf', 'local', { local: d.local, mes })}><span className="grow"><div className="t1">${d.local}</div><div className="t2">${d.por} · ${fmtDataCurta(dataLocal(new Date(d.em)))} · ${r.cont} de ${r.esp}</div></span><span className=${'tag ' + (r.perd || r.dan ? 'm' : 'ok')}>${r.perd || r.dan ? (r.perd + r.dan) + ' com problema' : 'ok'}</span><span className="chev">›</span></button>`; })}</div>
+    <button className="btn block" disabled=${!!ocup || !docs.length} onClick=${pdf}><${Ic} n="download" s=${18} />${ocup || 'Relatório completo (PDF)'}</button>
+  </${Tela}>`;
+}
+
+/* ================= PROJETO × NOTA (lista de material do projeto) ================= */
+async function listaDoProjetoPDF(file) {
+  try {
+    await loadScript(LIBS.pdfjs); window.pdfjsLib.GlobalWorkerOptions.workerSrc = LIBS.pdfworker;
+    const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise; const out = [];
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const tc = await (await pdf.getPage(p)).getTextContent();
+      const its = tc.items.filter(i => i.str && i.str.trim()).map(i => ({ s: i.str.trim(), x: i.transform[4], y: i.transform[5], h: Math.abs(i.transform[3]) || 8, w: i.width }));
+      its.filter(i => /^descri[cç][aã]o/i.test(i.s)).forEach(hd => {
+        const q = its.filter(i => /^quantidade$/i.test(i.s) && Math.abs(i.y - hd.y) < hd.h * 0.8 && i.x > hd.x).sort((a, b) => a.x - b.x)[0]; if (!q) return;
+        const passo = hd.h * 1.1, fimX = q.x + Math.max(q.w, 40) + 20;
+        const abaixo = its.filter(i => i.y < hd.y - 1 && i.x >= hd.x - 5 && i.x < fimX).sort((a, b) => b.y - a.y);
+        let yAnt = hd.y; const linhas = [];
+        for (const it of abaixo) { if (yAnt - it.y > passo * 3.2 || /^descri[cç][aã]o/i.test(it.s)) break; let l = linhas.find(x => Math.abs(x.y - it.y) < hd.h * 0.6); if (!l) { l = { y: it.y, d: [], q: [] }; linhas.push(l); } if (it.x >= q.x - 15) l.q.push(it.s); else l.d.push(it); yAnt = it.y; }
+        linhas.forEach(l => { const desc = l.d.sort((a, b) => a.x - b.x).map(x => x.s).join(' ').replace(/\s+/g, ' ').trim(); const qtd = parseInt(l.q.join('').replace(/\D/g, ''), 10); if (desc && !/^total/i.test(desc) && qtd > 0) out.push({ desc, qtd }); });
+      });
+    }
+    return out;
+  } catch (e) { console.warn('lista do projeto', e); return []; }
+}
+const chaveDesc = (s) => norm(s).replace(/[^a-z0-9]/g, '');
+function difProjetoNota(nota) {
+  const refs = nota.projetosRef || []; if (!refs.length) return null;
+  const projs = store.todos('projetos').filter(p => p.numero && refs.includes(p.numero) && (p.lista || []).length); if (!projs.length) return null;
+  const proj = {}; const nomes = {}; projs.forEach(p => p.lista.forEach(l => { const k = chaveDesc(l.desc); proj[k] = (proj[k] || 0) + l.qtd; nomes[k] = nomes[k] || l.desc; }));
+  const nf = {}; (nota.itens || []).forEach(i => { const k = chaveDesc(i.desc); nf[k] = (nf[k] || 0) + i.qtd; nomes[k] = nomes[k] || i.desc; });
+  const dif = []; let iguais = 0;
+  new Set(Object.keys(proj).concat(Object.keys(nf))).forEach(k => { const a = proj[k] || 0, b = nf[k] || 0; if (a === b) iguais++; else dif.push({ desc: nomes[k], proj: a, nota: b }); });
+  dif.sort((x, y) => Math.abs(y.nota - y.proj) - Math.abs(x.nota - x.proj));
+  return { dif, iguais, projetos: [...new Set(projs.map(p => 'PJ ' + p.numero))] };
+}
+function AvisoProjetoNota({ nota }) {
+  const d = difProjetoNota(nota); const [todos, setTodos] = useState(false);
+  if (!d || !d.dif.length) return null;
+  const lista = todos ? d.dif : d.dif.slice(0, 6);
+  return html`<div className="card pad" style=${{ gap: 10, boxShadow: 'inset 0 0 0 1.5px #B8962E' }}>
+    <div style=${{ display: 'flex', alignItems: 'center', gap: 10 }}><span style=${{ width: 32, height: 32, borderRadius: 10, background: '#FBF3DD', color: '#5C4300', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}>!</span><span className="grow"><div style=${{ fontSize: 15, fontWeight: 700 }}>Projeto × nota: ${plural(d.dif.length, 'diferença', 'diferenças')}</div><div className="t2">NF ${nota.numero} · ${d.projetos.join(', ')} · ${nota.local || ''}</div></span></div>
+    <table style=${{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}><tbody><tr className="t3"><td style=${{ padding: '4px 0' }}>Peça</td><td style=${{ textAlign: 'right' }}>Projeto</td><td style=${{ textAlign: 'right' }}>Nota</td><td style=${{ textAlign: 'right' }}>Dif.</td></tr>
+      ${lista.map((x, ix) => { const df = x.nota - x.proj; return html`<tr key=${ix} style=${{ borderTop: '1px solid var(--line2)' }}><td style=${{ padding: '7px 4px 7px 0' }}>${x.desc}</td><td style=${{ textAlign: 'right' }}>${x.proj || '—'}</td><td style=${{ textAlign: 'right' }}>${x.nota || '—'}</td><td style=${{ textAlign: 'right', fontWeight: 700, color: df < 0 ? 'var(--mag-t)' : '#243B8F', whiteSpace: 'nowrap' }}>${!x.nota ? 'não veio' : !x.proj ? 'fora do projeto' : (df > 0 ? '+' : '') + df}</td></tr>`; })}</tbody></table>
+    ${d.dif.length > 6 && html`<button className="link" style=${{ padding: 0, alignSelf: 'flex-start' }} onClick=${() => setTodos(!todos)}>${todos ? 'Mostrar menos' : 'Ver todas (' + d.dif.length + ')'}</button>`}
+    <span className="t3">${d.iguais ? 'As outras ' + d.iguais + ' peças batem. ' : ''}Confira na fábrica antes de carregar.</span></div>`;
 }
 
 </script>
